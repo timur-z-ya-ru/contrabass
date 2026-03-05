@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -20,6 +21,17 @@ import (
 	"github.com/junhoyeo/symphony-charm/internal/tracker"
 	"github.com/junhoyeo/symphony-charm/internal/tui"
 	"github.com/junhoyeo/symphony-charm/internal/workspace"
+)
+
+var (
+	runTUIOrchestrator = func(ctx context.Context, orch *orchestrator.Orchestrator) error {
+		return orch.Run(ctx)
+	}
+	runTUIProgram = func(p *tea.Program) (tea.Model, error) {
+		return p.Run()
+	}
+	startTUIEventBridge   = tui.StartEventBridge
+	runTUIShutdownTimeout = 6 * time.Second
 )
 
 func main() {
@@ -177,20 +189,36 @@ func runTUI(ctx context.Context, orch *orchestrator.Orchestrator) error {
 	model := tui.NewModel()
 	p := tea.NewProgram(model)
 
-	tui.StartEventBridge(p, orch.Events())
+	startTUIEventBridge(p, orch.Events())
 
 	orchDone := make(chan error, 1)
+	orchestratorRunner := runTUIOrchestrator
 	go func() {
-		orchDone <- orch.Run(tuiCtx)
+		defer func() {
+			if r := recover(); r != nil {
+				orchDone <- fmt.Errorf("orchestrator panic: %v", r)
+			}
+		}()
+		orchDone <- orchestratorRunner(tuiCtx, orch)
 	}()
 
-	_, tuiErr := p.Run()
+	_, tuiErr := runTUIProgram(p)
 
 	// TUI exited — cancel orchestrator context and wait for graceful shutdown
 	tuiCancel()
 	select {
-	case <-orchDone:
-	case <-time.After(6 * time.Second):
+	case orchErr := <-orchDone:
+		if orchErr != nil {
+			if tuiErr != nil {
+				return fmt.Errorf("orchestrator failed: %w (tui error: %v)", orchErr, tuiErr)
+			}
+			return orchErr
+		}
+	case <-time.After(runTUIShutdownTimeout):
+		if tuiErr != nil {
+			return fmt.Errorf("timed out waiting for orchestrator shutdown: %w", tuiErr)
+		}
+		return errors.New("timed out waiting for orchestrator shutdown")
 	}
 
 	return tuiErr
