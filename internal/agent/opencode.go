@@ -276,6 +276,7 @@ func (r *OpenCodeRunner) Start(ctx context.Context, _ types.Issue, _ string, pro
 
 	finish := func(doneErr error) {
 		doneOnce.Do(func() {
+			cancelStream()
 			done <- doneErr
 			close(done)
 			close(events)
