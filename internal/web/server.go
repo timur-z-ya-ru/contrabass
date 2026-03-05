@@ -55,16 +55,23 @@ func normalizeListenAddr(addr string) string {
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	listener, err := net.Listen("tcp", s.listenAddr)
+	if err != nil {
+		return err
+	}
+
+	return s.Serve(ctx, listener)
+}
+
+func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	if ctx == nil {
 		return errors.New("context is nil")
 	}
 	if s.snapshotProvider == nil {
 		return errors.New("snapshot provider is nil")
 	}
-
-	listener, err := net.Listen("tcp", s.listenAddr)
-	if err != nil {
-		return err
+	if listener == nil {
+		return errors.New("listener is nil")
 	}
 
 	mux := s.newMux()
@@ -114,6 +121,12 @@ func (s *Server) newMux() *http.ServeMux {
 func (s *Server) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		next(w, r)
 	}
 }

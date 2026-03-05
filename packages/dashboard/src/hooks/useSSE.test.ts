@@ -168,8 +168,8 @@ describe('useSSE state helpers', () => {
 
     const afterFinish = applyEvent(afterStart, agentFinished)
     expect(afterFinish.running.find((entry) => entry.issue_id === 'ISSUE-1')).toBeUndefined()
-    expect(afterFinish.stats.TotalTokensIn).toBe(afterStart.stats.TotalTokensIn + 20)
-    expect(afterFinish.stats.TotalTokensOut).toBe(afterStart.stats.TotalTokensOut + 30)
+    expect(afterFinish.stats.TotalTokensIn).toBe(afterStart.stats.TotalTokensIn)
+    expect(afterFinish.stats.TotalTokensOut).toBe(afterStart.stats.TotalTokensOut)
 
     const afterBackoff = applyEvent(afterFinish, backoffEnqueued)
     expect(afterBackoff.backoff.find((entry) => entry.issue_id === 'ISSUE-4')).toBeTruthy()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -170,8 +171,12 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 		}
 
 		srv := web.NewServer(fmt.Sprintf("localhost:%d", port), orch, h, dashboardFS)
+		listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+		if err != nil {
+			return fmt.Errorf("listen web dashboard: %w", err)
+		}
 		go func() {
-			if err := srv.Start(ctx); err != nil {
+			if err := srv.Serve(ctx, listener); err != nil {
 				logger.Error("web server error", "err", err)
 			}
 		}()
@@ -210,7 +215,8 @@ func runDryRun(ctx context.Context, orch *orchestrator.Orchestrator) error {
 func runHeadless(ctx context.Context, orch *orchestrator.Orchestrator, logger *log.Logger, h *hub.Hub) error {
 	events := orch.Events()
 	if h != nil {
-		_, subscribedEvents := h.Subscribe()
+		subID, subscribedEvents := h.Subscribe()
+		defer h.Unsubscribe(subID)
 		events = subscribedEvents
 	}
 
@@ -255,7 +261,8 @@ func runTUI(ctx context.Context, orch *orchestrator.Orchestrator, h *hub.Hub) er
 
 	events := orch.Events()
 	if h != nil {
-		_, subscribedEvents := h.Subscribe()
+		subID, subscribedEvents := h.Subscribe()
+		defer h.Unsubscribe(subID)
 		events = subscribedEvents
 	}
 

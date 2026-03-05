@@ -136,6 +136,22 @@ func TestServerRoutes(t *testing.T) {
 	}
 }
 
+func TestServerCORSPreflight(t *testing.T) {
+	provider := fakeSnapshotProvider{snapshot: orchestrator.StateSnapshot{Issues: map[string]types.Issue{}}}
+	s := &Server{snapshotProvider: provider, dashboardFS: nil}
+	h := s.newMux()
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/refresh", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "GET, POST, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "Content-Type", rec.Header().Get("Access-Control-Allow-Headers"))
+}
+
 func TestNormalizeListenAddr(t *testing.T) {
 	assert.Equal(t, defaultListenAddr, normalizeListenAddr(""))
 	assert.Equal(t, "localhost:9090", normalizeListenAddr(":9090"))

@@ -25,13 +25,6 @@ interface AgentStartedData {
   Workspace: string
 }
 
-interface AgentFinishedData {
-  Attempt: number
-  Phase: number
-  TokensIn: number
-  TokensOut: number
-}
-
 interface BackoffEnqueuedData {
   Attempt: number
   RetryAt: string
@@ -85,7 +78,6 @@ export function applyEvent(snapshot: StateSnapshot, event: OrchestratorEvent): S
     }
 
     case 2: {
-      const data = event.Data as AgentFinishedData
       const running = snapshot.running.filter((item) => item.issue_id !== event.IssueID)
 
       return {
@@ -94,8 +86,6 @@ export function applyEvent(snapshot: StateSnapshot, event: OrchestratorEvent): S
         stats: {
           ...snapshot.stats,
           Running: running.length,
-          TotalTokensIn: snapshot.stats.TotalTokensIn + data.TokensIn,
-          TotalTokensOut: snapshot.stats.TotalTokensOut + data.TokensOut,
         },
       }
     }
