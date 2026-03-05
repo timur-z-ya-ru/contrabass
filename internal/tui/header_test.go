@@ -12,6 +12,7 @@ func TestHeaderViewContainsTitle(t *testing.T) {
 	out := h.View()
 	assert.Contains(t, out, "SYMPHONY STATUS")
 	assert.Contains(t, out, "3/10")
+	assert.Contains(t, out, "collecting...")
 }
 
 func TestFormatRuntime(t *testing.T) {
@@ -58,13 +59,17 @@ func TestFormatThroughput(t *testing.T) {
 		tps  float64
 		want string
 	}{
-		{"zero", 0.0, "0.0 tok/s"},
+		{"zero", 0.0, "collecting..."},
 		{"small", 12.3, "12.3 tok/s"},
 		{"large", 1234.5, "1,234.5 tok/s"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, formatThroughput(tt.tps))
+			tokens := int64(1)
+			if tt.name == "zero" {
+				tokens = 0
+			}
+			assert.Equal(t, tt.want, formatThroughput(tt.tps, tokens))
 		})
 	}
 }
@@ -75,6 +80,7 @@ func TestHeaderZeroData(t *testing.T) {
 		out := h.View()
 		assert.Contains(t, out, "SYMPHONY STATUS")
 		assert.Contains(t, out, "0/0")
+		assert.Contains(t, out, "collecting...")
 	})
 }
 

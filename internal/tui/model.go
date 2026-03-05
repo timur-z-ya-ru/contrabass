@@ -196,9 +196,13 @@ func (m Model) applyOrchestratorEvent(event orchestrator.OrchestratorEvent) Mode
 		case orchestrator.AgentStarted:
 			delete(m.backoffs, event.IssueID)
 			delete(m.backoffRetryAt, event.IssueID)
+			displayID := event.IssueID
+			if started.IssueIdentifier != "" {
+				displayID = started.IssueIdentifier
+			}
 			m.agentStartTime[event.IssueID] = event.Timestamp
 			m.agents[event.IssueID] = AgentRow{
-				IssueID:   event.IssueID,
+				IssueID:   displayID,
 				Stage:     types.InitializingSession.String(),
 				PID:       started.PID,
 				Age:       "0s",

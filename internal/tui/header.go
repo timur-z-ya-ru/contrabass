@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -49,19 +50,18 @@ func (h Header) View() string {
 	line1 := titleStyle.Render("SYMPHONY STATUS")
 	line2 := strings.Join([]string{
 		labelStyle.Render("Agents: ") + valueStyle.Render(fmt.Sprintf("%d/%d", h.data.RunningAgents, h.data.MaxAgents)),
-		labelStyle.Render("Throughput: ") + valueStyle.Render(formatThroughput(h.data.ThroughputTPS)),
+		labelStyle.Render("Throughput: ") + valueStyle.Render(formatThroughput(h.data.ThroughputTPS, h.data.TokensTotal)),
 		labelStyle.Render("Runtime: ") + valueStyle.Render(formatRuntime(h.data.RuntimeSeconds)),
 	}, "    ")
-	line3 := labelStyle.Render("Tokens: ") +
-		labelStyle.Render("in: ") + valueStyle.Render(formatTokens(h.data.TokensIn)) +
-		labelStyle.Render(" | out: ") + valueStyle.Render(formatTokens(h.data.TokensOut)) +
-		labelStyle.Render(" | total: ") + valueStyle.Render(formatTokens(h.data.TokensTotal))
+	line3 := labelStyle.Render("Tokens: ") + formatTokenLine(labelStyle, valueStyle, h.data)
+	scope, fullURL := projectDetails(h.data.ProjectURL)
 	line4 := labelStyle.Render("Model: ") + valueStyle.Render(h.data.ModelName) +
 		"    " +
-		labelStyle.Render("Project: ") + urlStyle.Render(h.data.ProjectURL)
-	line5 := labelStyle.Render(fmt.Sprintf("Refresh in %ds", h.data.RefreshIn))
+		labelStyle.Render("Scope: ") + urlStyle.Render(scope)
+	line5 := labelStyle.Render("URL: ") + urlStyle.Render(fullURL)
+	line6 := labelStyle.Render(fmt.Sprintf("Refresh in %ds", h.data.RefreshIn))
 
-	content := strings.Join([]string{line1, line2, line3, line4, line5}, "\n")
+	content := strings.Join([]string{line1, line2, line3, line4, line5, line6}, "\n")
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -119,7 +119,52 @@ func formatTokens(n int64) string {
 	return b.String()
 }
 
-func formatThroughput(tps float64) string {
+func formatTokenLine(labelStyle lipgloss.Style, valueStyle lipgloss.Style, data HeaderData) string {
+	if data.TokensTotal == 0 {
+		return lipgloss.NewStyle().Faint(true).Render("collecting...")
+	}
+	return labelStyle.Render("in: ") + valueStyle.Render(formatTokens(data.TokensIn)) +
+		labelStyle.Render(" | out: ") + valueStyle.Render(formatTokens(data.TokensOut)) +
+		labelStyle.Render(" | total: ") + valueStyle.Render(formatTokens(data.TokensTotal))
+}
+
+func projectDetails(raw string) (scope string, full string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "-", "-"
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw, truncateForHeader(raw, 80)
+	}
+	path := strings.Trim(u.Path, "/")
+	if path == "" {
+		return u.Host, u.Host
+	}
+	segments := strings.Split(path, "/")
+	scope = path
+	if len(segments) >= 4 && segments[1] == "project" {
+		scope = segments[0] + "/" + segments[2]
+	} else if len(segments) >= 2 && segments[0] == "project" {
+		scope = segments[1]
+	} else if len(segments) >= 2 {
+		scope = segments[0] + "/" + segments[1]
+	}
+	full = u.Host + "/" + path
+	return scope, truncateForHeader(full, 80)
+}
+
+func truncateForHeader(s string, max int) string {
+	if max <= 3 || len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
+}
+
+func formatThroughput(tps float64, tokensTotal int64) string {
+	if tokensTotal == 0 {
+		return "collecting..."
+	}
 	raw := fmt.Sprintf("%.1f", tps)
 	parts := strings.SplitN(raw, ".", 2)
 	whole, err := strconv.ParseInt(parts[0], 10, 64)

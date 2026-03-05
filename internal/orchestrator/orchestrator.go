@@ -360,10 +360,12 @@ func (o *Orchestrator) dispatchIssue(
 		Type:    EventAgentStarted,
 		IssueID: issue.ID,
 		Data: AgentStarted{
-			Attempt:   runAttempt.Attempt,
-			PID:       process.PID,
-			SessionID: process.SessionID,
-			Workspace: workspacePath,
+			IssueIdentifier: issue.Identifier,
+			IssueURL:        issue.URL,
+			Attempt:         runAttempt.Attempt,
+			PID:             process.PID,
+			SessionID:       process.SessionID,
+			Workspace:       workspacePath,
 		},
 	})
 

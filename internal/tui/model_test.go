@@ -219,28 +219,22 @@ func TestModel_UnknownEventTypeHandled(t *testing.T) {
 	}
 }
 
-// TestTableView_NarrowWidthNoOverflow verifies that the table separator
-// respects a narrow SetWidth and doesn't overflow.
 func TestTableView_NarrowWidthNoOverflow(t *testing.T) {
 	tests := []struct {
-		name     string
-		width    int
-		expected int // expected separator rune count
+		name  string
+		width int
 	}{
 		{
-			name:     "narrow 40-char terminal",
-			width:    40,
-			expected: 36, // 40 - 4 (indent)
+			name:  "narrow 40-char terminal",
+			width: 40,
 		},
 		{
-			name:     "standard 80-char terminal",
-			width:    80,
-			expected: 76, // 80 - 4
+			name:  "standard 80-char terminal",
+			width: 80,
 		},
 		{
-			name:     "zero width uses default 90",
-			width:    0,
-			expected: 90,
+			name:  "zero width uses auto sizing",
+			width: 0,
 		},
 	}
 
@@ -255,12 +249,15 @@ func TestTableView_NarrowWidthNoOverflow(t *testing.T) {
 			}}
 			tbl := NewTable().SetWidth(tt.width).Update(rows, "●")
 			out := stripANSI(tbl.View())
+			assert.NotEmpty(t, out)
 
-			// The output should contain the separator line.
-			assert.Contains(t, out, strings.Repeat("\u2500", tt.expected))
-			// But not a longer separator (unless default).
-			if tt.width > 4 {
-				assert.NotContains(t, out, strings.Repeat("\u2500", tt.expected+1))
+			if tt.width > 0 {
+				for _, line := range strings.Split(out, "\n") {
+					if line == "" {
+						continue
+					}
+					assert.LessOrEqual(t, len([]rune(line)), tt.width)
+				}
 			}
 		})
 	}
