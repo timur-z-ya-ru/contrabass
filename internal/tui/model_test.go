@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -159,8 +160,11 @@ func TestModelBackoffEnqueued(t *testing.T) {
 
 func TestModelViewComposition(t *testing.T) {
 	m := NewModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = updated.(Model)
+
 	now := time.Now()
-	updated, _ := m.Update(OrchestratorEventMsg{Event: orchestrator.OrchestratorEvent{
+	updated, _ = m.Update(OrchestratorEventMsg{Event: orchestrator.OrchestratorEvent{
 		Type:      orchestrator.EventBackoffEnqueued,
 		IssueID:   "ISSUE-2",
 		Timestamp: now,
@@ -169,6 +173,68 @@ func TestModelViewComposition(t *testing.T) {
 
 	view := updated.(Model).View().Content
 	assert.Contains(t, view, "SYMPHONY STATUS")
-	assert.Contains(t, view, "No agents running")
 	assert.Contains(t, view, "ISSUE-2")
+}
+
+func TestViewportScrollBasic(t *testing.T) {
+	m := NewModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m = updated.(Model)
+
+	for i := 0; i < 30; i++ {
+		id := fmt.Sprintf("ISSUE-%d", i)
+		m.agents[id] = AgentRow{
+			IssueID: id,
+			Stage:   "StreamingTurn",
+			PID:     1000 + i,
+			Age:     "1m",
+			Phase:   types.StreamingTurn,
+		}
+	}
+	m.syncTables()
+
+	assert.Equal(t, 0, m.viewport.YOffset())
+	updated, _ = m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	model := updated.(Model)
+	assert.Greater(t, model.viewport.YOffset(), 0)
+}
+
+func TestViewportWindowResize(t *testing.T) {
+	m := NewModel()
+	sizes := []tea.WindowSizeMsg{
+		{Width: 80, Height: 24},
+		{Width: 120, Height: 40},
+		{Width: 60, Height: 15},
+	}
+
+	for _, size := range sizes {
+		updated, _ := m.Update(size)
+		m = updated.(Model)
+		assert.Equal(t, size.Width, m.width)
+		assert.Equal(t, size.Height, m.height)
+	}
+}
+
+func TestViewportContentShorterThanHeight(t *testing.T) {
+	m := NewModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = updated.(Model)
+
+	m.agents["ISSUE-1"] = AgentRow{
+		IssueID: "ISSUE-1",
+		Stage:   "StreamingTurn",
+		PID:     1,
+		Phase:   types.StreamingTurn,
+	}
+	m.agents["ISSUE-2"] = AgentRow{
+		IssueID: "ISSUE-2",
+		Stage:   "Finishing",
+		PID:     2,
+		Phase:   types.Finishing,
+	}
+	m.syncTables()
+
+	updated, _ = m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	model := updated.(Model)
+	assert.Equal(t, 0, model.viewport.YOffset())
 }

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/junhoyeo/symphony-charm/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,9 @@ func newSnapshotModel() Model {
 	m.header = m.header.SetWidth(100)
 	m.table = m.table.SetWidth(100)
 	m.backoff = m.backoff.SetWidth(100)
+	m.viewport.SetWidth(100)
+	headerH := lipgloss.Height(m.header.View())
+	m.viewport.SetHeight(40 - headerH - 1)
 	return m
 }
 
@@ -51,6 +55,11 @@ func syncModel(m Model) Model {
 	m.table = m.table.Update(agentRowsSorted(m.agents))
 	m.backoff = m.backoff.Update(backoffRowsSorted(m.backoffs))
 	m.header = m.header.Update(m.stats)
+	content := m.table.View()
+	if bv := m.backoff.View(); bv != "" {
+		content += "\n" + bv
+	}
+	m.viewport.SetContent(content)
 	return m
 }
 
