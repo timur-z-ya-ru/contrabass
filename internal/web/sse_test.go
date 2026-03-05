@@ -88,6 +88,48 @@ func TestHandleSSEStreamsHubEvents(t *testing.T) {
 	assert.Equal(t, event.IssueID, got.IssueID)
 }
 
+func TestHandleSSESkipsStaleBufferedEventsAfterSnapshot(t *testing.T) {
+	now := time.Now().UTC()
+	provider := fakeSnapshotProvider{snapshot: orchestrator.StateSnapshot{
+		Issues:      map[string]types.Issue{},
+		GeneratedAt: now,
+	}}
+	s, source, _, cleanup := newSSETestServer(t, provider)
+	defer cleanup()
+
+	resp, reader := mustOpenSSE(t, s.newMux())
+	defer resp.Body.Close()
+
+	_ = readSSEFrame(t, reader)
+
+	stale := orchestrator.OrchestratorEvent{
+		Type:      orchestrator.EventStatusUpdate,
+		IssueID:   "issue-stale",
+		Data:      orchestrator.StatusUpdate{BackoffQueue: 1},
+		Timestamp: now.Add(-time.Second),
+	}
+	source <- stale
+
+	fresh := orchestrator.OrchestratorEvent{
+		Type:      orchestrator.EventStatusUpdate,
+		IssueID:   "issue-fresh",
+		Data:      orchestrator.StatusUpdate{BackoffQueue: 2},
+		Timestamp: now.Add(time.Second),
+	}
+	source <- fresh
+
+	frame := readSSEFrame(t, reader)
+	assert.Contains(t, frame, "event: StatusUpdate")
+	assert.Contains(t, frame, "id: 2")
+
+	data := mustSSEData(t, frame)
+	var got struct {
+		IssueID string `json:"IssueID"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(data), &got))
+	assert.Equal(t, fresh.IssueID, got.IssueID)
+}
+
 func TestHandleSSEUnsubscribesOnClientDisconnect(t *testing.T) {
 	provider := fakeSnapshotProvider{snapshot: orchestrator.StateSnapshot{Issues: map[string]types.Issue{}}}
 	s, _, h, cleanup := newSSETestServer(t, provider)
