@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/junhoyeo/symphony-charm/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -255,6 +257,170 @@ func TestCodexRunner_MalformedJSONEmitsProtocolError(t *testing.T) {
 	assertDoneEventually(t, proc.Done)
 }
 
+func TestCodexRunner_TimestampedUpdatesForwardedToRecipient(t *testing.T) {
+	runner := NewCodexRunner(helperCommand(t, "timestamped-updates"), 2*time.Second)
+
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "CORE-422", Title: "Continuation update"}, t.TempDir(), "hello")
+	require.NoError(t, err)
+
+	events := collectEvents(t, proc.Events, proc.Done, 2, 5*time.Second)
+	require.Len(t, events, 2)
+
+	assert.Equal(t, "turn/update", events[0].Type)
+	assert.False(t, events[0].Timestamp.IsZero())
+	assert.Equal(t, "recipient-1", events[0].Data["recipient"])
+	assert.Equal(t, "2026-03-05T12:34:56Z", events[0].Data["timestamp"])
+	assert.Equal(t, "follow-up turn still active", events[0].Data["message"])
+
+	assert.Equal(t, "turn/completed", events[1].Type)
+	assertDoneEventually(t, proc.Done)
+}
+
+func TestCodexRunner_ApprovalPolicyNeverAutoApproves(t *testing.T) {
+	runner := NewCodexRunner(helperCommand(t, "approval-never"), 2*time.Second)
+
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "APP-321", Title: "Approval policy never"}, t.TempDir(), "hello")
+	require.NoError(t, err)
+
+	events := collectEvents(t, proc.Events, proc.Done, 3, 5*time.Second)
+	require.Len(t, events, 3)
+
+	assert.Equal(t, "item/commandExecution/requestApproval", events[0].Type)
+	assert.Equal(t, "helper/sequence", events[1].Type)
+	methodsRaw, ok := events[1].Data["methods"].([]interface{})
+	require.True(t, ok)
+
+	methods := make([]string, 0, len(methodsRaw))
+	for _, method := range methodsRaw {
+		methods = append(methods, fmt.Sprint(method))
+	}
+
+	assert.Equal(t, []string{"initialize", "initialized", "thread/start", "turn/start"}, methods)
+	assert.Equal(t, "turn/completed", events[2].Type)
+	assertDoneEventually(t, proc.Done)
+}
+
+func TestCodexRunner_StderrForwardedToLogger(t *testing.T) {
+	runner := NewCodexRunner(helperCommand(t, "stderr-crash"), 2*time.Second)
+	var logs bytes.Buffer
+	runner.logger = log.NewWithOptions(&logs, log.Options{Level: log.DebugLevel})
+
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "APP-500", Title: "stderr forwarding"}, t.TempDir(), "hello")
+	require.NoError(t, err)
+
+	select {
+	case doneErr := <-proc.Done:
+		require.Error(t, doneErr)
+		assert.Contains(t, doneErr.Error(), "stderr: codex stderr side output")
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected process crash to be reported")
+	}
+
+	assert.NotNil(t, runner.logger)
+}
+
+func TestCodexRunner_EmptyBinaryPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		binaryPath string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"tabs and spaces", "\t  \t"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := NewCodexRunner(tt.binaryPath, 5*time.Second)
+			proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "Test"}, t.TempDir(), "hello")
+			require.Error(t, err)
+			assert.Nil(t, proc)
+			assert.Contains(t, err.Error(), "codex binary path is empty")
+		})
+	}
+}
+
+func TestCodexRunner_RPCError(t *testing.T) {
+	runner := NewCodexRunner(helperCommand(t, "rpc-error"), 5*time.Second)
+
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "Test"}, t.TempDir(), "hello")
+	require.Error(t, err)
+	assert.Nil(t, proc)
+	assert.Contains(t, err.Error(), "rpc error for id 1")
+}
+
+func TestRPCIDEquals_AllTypes(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     interface{}
+		requestID int
+		want      bool
+	}{
+		{"float64 match", float64(1), 1, true},
+		{"float64 no match", float64(2), 1, false},
+		{"float64 fractional", float64(1.5), 1, false},
+		{"int match", int(1), 1, true},
+		{"int no match", int(2), 1, false},
+		{"int64 match", int64(1), 1, true},
+		{"int64 no match", int64(2), 1, false},
+		{"string match", "1", 1, true},
+		{"string no match", "2", 1, false},
+		{"string non-numeric", "abc", 1, false},
+		{"nil value", nil, 1, false},
+		{"bool value", true, 1, false},
+		{"slice value", []int{1}, 1, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rpcIDEquals(tt.value, tt.requestID)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCodexRunner_StopNilProcess(t *testing.T) {
+	runner := NewCodexRunner("/nonexistent", 5*time.Second)
+	err := runner.Stop(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "process is nil")
+}
+
+func TestCodexRunner_WithStderr_NilAndEmpty(t *testing.T) {
+	runner := NewCodexRunner("/nonexistent", 5*time.Second)
+	baseErr := errors.New("base error")
+
+	t.Run("nil error returns nil", func(t *testing.T) {
+		result := runner.withStderr(nil, &safeBuffer{})
+		assert.NoError(t, result)
+	})
+
+	t.Run("nil stderr returns original error", func(t *testing.T) {
+		result := runner.withStderr(baseErr, nil)
+		assert.Equal(t, baseErr, result)
+	})
+
+	t.Run("empty stderr returns original error", func(t *testing.T) {
+		result := runner.withStderr(baseErr, &safeBuffer{})
+		assert.Equal(t, baseErr, result)
+	})
+
+	t.Run("whitespace-only stderr returns original error", func(t *testing.T) {
+		buf := &safeBuffer{}
+		_, _ = buf.Write([]byte("   \n\t  "))
+		result := runner.withStderr(baseErr, buf)
+		assert.Equal(t, baseErr, result)
+	})
+
+	t.Run("non-empty stderr wraps error", func(t *testing.T) {
+		buf := &safeBuffer{}
+		_, _ = buf.Write([]byte("something went wrong"))
+		result := runner.withStderr(baseErr, buf)
+		assert.ErrorIs(t, result, baseErr)
+		assert.Contains(t, result.Error(), "stderr: something went wrong")
+	})
+}
+
 func helperCommand(t *testing.T, mode string) string {
 	t.Helper()
 	exe, err := os.Executable()
@@ -340,6 +506,13 @@ func TestCodexHelperProcess(t *testing.T) {
 			if mode == "silent-handshake" {
 				continue
 			}
+			if mode == "rpc-error" {
+				writeJSON(t, writer, map[string]interface{}{
+					"id":    msg["id"],
+					"error": map[string]interface{}{"code": -32001, "message": "server overload"},
+				})
+				return
+			}
 			writeJSON(t, writer, map[string]interface{}{"id": msg["id"], "result": map[string]interface{}{"ok": true}})
 		case "initialized":
 		case "thread/start":
@@ -423,6 +596,28 @@ func TestCodexHelperProcess(t *testing.T) {
 				}
 
 				select {}
+			case "timestamped-updates":
+				writeJSON(t, writer, map[string]interface{}{
+					"method": "turn/update",
+					"params": map[string]interface{}{
+						"recipient": "recipient-1",
+						"timestamp": "2026-03-05T12:34:56Z",
+						"message":   "follow-up turn still active",
+					},
+				})
+				writeJSON(t, writer, map[string]interface{}{"method": "turn/completed", "params": map[string]interface{}{}})
+				return
+			case "approval-never":
+				writeJSON(t, writer, map[string]interface{}{
+					"method": "item/commandExecution/requestApproval",
+					"params": map[string]interface{}{"command": "npm publish"},
+				})
+				writeJSON(t, writer, map[string]interface{}{"method": "helper/sequence", "params": map[string]interface{}{"methods": methods}})
+				writeJSON(t, writer, map[string]interface{}{"method": "turn/completed", "params": map[string]interface{}{}})
+				return
+			case "stderr-crash":
+				_, _ = fmt.Fprintln(os.Stderr, "codex stderr side output")
+				os.Exit(23)
 			default:
 				os.Exit(9)
 			}
