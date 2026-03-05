@@ -122,12 +122,39 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 		}
 	}()
 
-	// 6. Create tracker (Linear client)
-	linearClient := tracker.NewLinearClient(tracker.LinearConfig{
-		APIKey:      os.Getenv("LINEAR_API_KEY"),
-		ProjectSlug: projectSlug(cfg),
-		AssigneeID:  cfg.TrackerAssigneeID(),
-	})
+	// 6. Create tracker
+	var trackerClient tracker.Tracker
+	switch cfg.TrackerType() {
+	case "linear":
+		trackerClient = tracker.NewLinearClient(tracker.LinearConfig{
+			APIKey:      os.Getenv("LINEAR_API_KEY"),
+			ProjectSlug: projectSlug(cfg),
+			AssigneeID:  cfg.TrackerAssigneeID(),
+		})
+	case "github":
+		token := os.Getenv("GITHUB_TOKEN")
+		if token == "" {
+			token = cfg.GitHubToken()
+		}
+		owner := os.Getenv("GITHUB_OWNER")
+		if owner == "" {
+			owner = cfg.GitHubOwner()
+		}
+		repo := os.Getenv("GITHUB_REPO")
+		if repo == "" {
+			repo = cfg.GitHubRepo()
+		}
+		trackerClient = tracker.NewGitHubClient(tracker.GitHubConfig{
+			APIToken: token,
+			Owner:    owner,
+			Repo:     repo,
+			Labels:   cfg.GitHubLabels(),
+			Assignee: cfg.GitHubAssignee(),
+			Endpoint: cfg.GitHubEndpoint(),
+		})
+	default:
+		return fmt.Errorf("unknown tracker type: %q (supported: linear, github)", cfg.TrackerType())
+	}
 
 	// 7. Create workspace manager (uses cwd as repo root)
 	repoPath, err := os.Getwd()
@@ -137,14 +164,35 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 	workspaceMgr := workspace.NewManager(repoPath)
 
 	// 8. Create agent runner
-	codexBin := os.Getenv("CODEX_BINARY")
-	if codexBin == "" {
-		codexBin = cfg.CodexBinaryPath()
+	var agentRunner agent.AgentRunner
+	switch cfg.AgentType() {
+	case "codex":
+		codexBin := os.Getenv("CODEX_BINARY")
+		if codexBin == "" {
+			codexBin = cfg.CodexBinaryPath()
+		}
+		agentRunner = agent.NewCodexRunner(codexBin, 30*time.Second)
+	case "opencode":
+		opencodeBin := os.Getenv("OPENCODE_BINARY")
+		if opencodeBin == "" {
+			opencodeBin = cfg.OpenCodeBinaryPath()
+		}
+		port := cfg.OpenCodePort()
+		password := os.Getenv("OPENCODE_SERVER_PASSWORD")
+		if password == "" {
+			password = cfg.OpenCodePassword()
+		}
+		username := os.Getenv("OPENCODE_SERVER_USERNAME")
+		if username == "" {
+			username = cfg.OpenCodeUsername()
+		}
+		agentRunner = agent.NewOpenCodeRunner(opencodeBin, port, password, username, 30*time.Second)
+	default:
+		return fmt.Errorf("unknown agent type: %q (supported: codex, opencode)", cfg.AgentType())
 	}
-	agentRunner := agent.NewCodexRunner(codexBin, 30*time.Second)
 
 	// 9. Create orchestrator
-	orch := orchestrator.NewOrchestrator(linearClient, workspaceMgr, agentRunner, watcher, logger)
+	orch := orchestrator.NewOrchestrator(trackerClient, workspaceMgr, agentRunner, watcher, logger)
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signalChan)
