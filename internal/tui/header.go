@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	_ "image/png"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -18,11 +19,9 @@ import (
 	"github.com/charmbracelet/x/mosaic"
 )
 
-// nativeImageRows is the number of terminal rows the native image occupies.
-const nativeImageRows = 15
-
-// nativeImageCols is the number of terminal columns the native image occupies.
-const nativeImageCols = 30
+// logoBoxCols/logoBoxRows define the logo box content dimensions in terminal cells.
+const logoBoxCols = 20
+const logoBoxRows = 10
 
 var (
 	headerLogoOnce sync.Once
@@ -73,11 +72,7 @@ func (h Header) View() string {
 	labelStyle := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("45"))
 	urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-
-	var logoBlock string
-	if logo := renderHeaderLogo(); logo != "" {
-		logoBlock = logo + "\n"
-	}
+	// --- Build the stats lines ---
 	line1 := titleStyle.Render("CONTRABASS STATUS")
 	line2 := strings.Join([]string{
 		labelStyle.Render("Agents: ") + valueStyle.Render(fmt.Sprintf("%d/%d", h.data.RunningAgents, h.data.MaxAgents)),
@@ -91,18 +86,44 @@ func (h Header) View() string {
 		labelStyle.Render("Scope: ") + urlStyle.Render(scope)
 	line5 := labelStyle.Render("URL: ") + urlStyle.Render(fullURL)
 	line6 := labelStyle.Render(fmt.Sprintf("Refresh in %ds", h.data.RefreshIn))
+	statsContent := strings.Join([]string{line1, line2, line3, line4, line5, line6}, "\n")
 
-	content := strings.Join([]string{logoBlock + line1, line2, line3, line4, line5, line6}, "\n")
+	outerChrome := 4 // outer border(2) + outer padding(2)
+	innerWidth := h.width - outerChrome
+	if innerWidth < 40 {
+		innerWidth = 40
+	}
 
-	box := lipgloss.NewStyle().
+	logoContent := renderHeaderLogo()
+	logoBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240"))
+	logoBox := logoBoxStyle.Render(logoContent)
+	logoBoxRenderedWidth := lipgloss.Width(logoBox)
+
+	statsBoxChrome := 4 // border(2) + padding(2)
+	gap := 1
+	statsContentWidth := innerWidth - logoBoxRenderedWidth - gap - statsBoxChrome
+	if statsContentWidth < 20 {
+		statsContentWidth = 20
+	}
+	statsBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("133")).
+		Padding(0, 1).
+		Width(statsContentWidth)
+	statsBox := statsBoxStyle.Render(statsContent)
+
+	inner := lipgloss.JoinHorizontal(lipgloss.Bottom, logoBox, " ", statsBox)
+
+	outerBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
 		Padding(0, 1)
 	if h.width > 0 {
-		box = box.Width(h.width)
+		outerBox = outerBox.Width(innerWidth)
 	}
-
-	return box.Render(content)
+	return outerBox.Render(inner)
 }
 
 // termImageMode represents the detected terminal image capability.
@@ -152,9 +173,10 @@ func renderHeaderLogo() string {
 			// Return blank placeholder lines to reserve space for the native image.
 			// The actual image is rendered via tea.Raw() bypassing the cell renderer.
 			// Each line is a single space to ensure the lines are preserved.
-			lines := make([]string, nativeImageRows)
+			placeholder := strings.Repeat(" ", logoBoxCols)
+			lines := make([]string, logoBoxRows)
 			for i := range lines {
-				lines[i] = ""
+				lines[i] = placeholder
 			}
 			headerLogoArt = strings.Join(lines, "\n")
 		default:
@@ -199,17 +221,17 @@ func buildNativeImageRaw() string {
 	if nativeImageEscape == "" {
 		return ""
 	}
-	// In alt screen, the header box has a 1-char rounded border on top,
-	// plus 1 line of padding. The image should be placed starting at:
-	//   row 2 (1-indexed): inside the border top
-	//   col 3 (1-indexed): inside border (1) + padding (1) + content start
+	// In the horizontal two-box layout, the image sits inside the logo box (left),
+	// which is inside the outer container box. The cursor position is:
+	//   row 3 (1-indexed): outer rounded border (1) + logo box border top (1) + content start
+	//   col 4 (1-indexed): outer border (1) + outer padding (1) + logo box border (1) + content start
 	//
 	// Cursor positioning sequence:
 	//   \x1b[s        — save cursor position
-	//   \x1b[2;3H     — move to row 2, col 3
+	//   \x1b[3;4H     — move to row 3, col 4
 	//   <image data>  — Kitty/iTerm escape sequence
 	//   \x1b[u        — restore cursor position
-	return "\x1b[s\x1b[2;3H" + nativeImageEscape + "\x1b[u"
+	return "\x1b[s\x1b[3;4H" + nativeImageEscape + "\x1b[u"
 }
 
 // cleanupNativeImageRaw returns the escape sequence to delete all Kitty images.
@@ -236,13 +258,11 @@ func CleanupNativeImage() {
 // Returns the raw escape sequence string (NOT safe for View()).
 func buildKittyEscape(img image.Image) string {
 	img = resizeImage(img, 200, 200)
-	img = compositeOnBackground(img)
 
 	var buf bytes.Buffer
 	opts := rasterm.KittyImgOpts{
-		DstCols: nativeImageCols,
-		DstRows: nativeImageRows,
-		ImageId: 1, // persistent image ID for re-placement
+		DstCols: logoBoxCols,
+		ImageId: 1,
 	}
 	if err := rasterm.KittyWriteImage(&buf, img, opts); err != nil {
 		return ""
@@ -254,13 +274,11 @@ func buildKittyEscape(img image.Image) string {
 // Returns the raw escape sequence string (NOT safe for View()).
 func buildItermEscape(img image.Image) string {
 	img = resizeImage(img, 200, 200)
-	img = compositeOnBackground(img)
 
 	var buf bytes.Buffer
 	opts := rasterm.ItermImgOpts{
 		DisplayInline: true,
-		Width:         fmt.Sprintf("%d", nativeImageCols),
-		Height:        fmt.Sprintf("%d", nativeImageRows),
+		Width:         fmt.Sprintf("%d", logoBoxCols),
 	}
 	if err := rasterm.ItermWriteImageWithOptions(&buf, img, opts); err != nil {
 		return ""
@@ -283,17 +301,63 @@ func renderMosaicLogo() string {
 	return renderMosaicImage(img)
 }
 
-// renderMosaicImage renders the image using mosaic half-block characters (fallback).
 func renderMosaicImage(img image.Image) string {
-	// Manually resize to 2:1 pixel ratio for visually square output.
-	// Mosaic Half: 2px × 2px → 1 terminal char (1 col × 1 row).
-	// Terminal chars are ~2x taller than wide, so a 2:1 pixel W:H
-	// produces a visually square image.
-	// 120×60 px → 60 cols × 30 rows → visually square.
-	img = resizeImage(img, 120, 60)
+	pixW := logoBoxCols * 2 // 40 pixel cols for mosaic (2 px per terminal col)
+	pixH := logoBoxRows * 2 // 20 pixel rows for mosaic (2 px per terminal row)
+	// Terminal cells are ~2:1 (height:width), so the visual display area
+	// is approximately square. Cover a visual square first, then squash
+	// to the actual pixel grid to compensate for cell aspect ratio.
+	img = resizeToCover(img, pixW, pixW)
+	img = resizeImage(img, pixW, pixH)
 	img = compositeOnBackground(img)
 	m := mosaic.New().Symbol(mosaic.Half)
 	return strings.TrimRight(m.Render(img), "\n")
+}
+
+// resizeToCover scales src to fill targetW×targetH (like CSS object-fit: cover),
+// preserving aspect ratio and center-cropping excess.
+func resizeToCover(src image.Image, targetW, targetH int) image.Image {
+	b := src.Bounds()
+	srcW, srcH := float64(b.Dx()), float64(b.Dy())
+	if srcW == 0 || srcH == 0 {
+		return src
+	}
+	scale := math.Max(float64(targetW)/srcW, float64(targetH)/srcH)
+	w := int(math.Round(srcW * scale))
+	h := int(math.Round(srcH * scale))
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	resized := resizeImage(src, w, h)
+	if w == targetW && h == targetH {
+		return resized
+	}
+	offsetX := (w - targetW) / 2
+	offsetY := (h - targetH) / 2
+	cropped := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+	draw.Draw(cropped, cropped.Bounds(), resized, image.Pt(offsetX, offsetY), draw.Src)
+	return cropped
+}
+
+func resizeToFit(src image.Image, maxW, maxH int) image.Image {
+	b := src.Bounds()
+	srcW, srcH := float64(b.Dx()), float64(b.Dy())
+	if srcW == 0 || srcH == 0 {
+		return src
+	}
+	scale := math.Min(float64(maxW)/srcW, float64(maxH)/srcH)
+	w := int(math.Round(srcW * scale))
+	h := int(math.Round(srcH * scale))
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	return resizeImage(src, w, h)
 }
 
 // resizeImage scales the image to exactly targetW x targetH pixels using bilinear interpolation.
