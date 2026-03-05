@@ -83,6 +83,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			headerH := lipgloss.Height(m.header.View())
 			helpH := lipgloss.Height(m.help.View(m.keys))
 			m.viewport.SetHeight(m.height - headerH - helpH)
+			m.syncTables()
 			return m, nil
 		}
 		var vpCmd tea.Cmd

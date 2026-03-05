@@ -592,6 +592,28 @@ func TestViewportHeightWithHelp(t *testing.T) {
 	assert.Less(t, heightOn, heightOff)
 }
 
+func TestHelpToggleRefreshesViewportContent(t *testing.T) {
+	m := NewModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = updated.(Model)
+
+	m.agents["ISSUE-1"] = AgentRow{IssueID: "ISSUE-1", Stage: "StreamingTurn", PID: 1, Phase: types.StreamingTurn}
+	m.syncTables()
+
+	before := stripANSI(m.View().Content)
+	assert.Contains(t, before, "ISSUE-1")
+	assert.NotContains(t, before, "ISSUE-NEW")
+
+	m.agents["ISSUE-NEW"] = AgentRow{IssueID: "ISSUE-NEW", Stage: "StreamingTurn", PID: 2, Phase: types.StreamingTurn}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Text: "?", Code: '?'})
+	assert.Nil(t, cmd)
+	m = updated.(Model)
+
+	after := stripANSI(m.View().Content)
+	assert.Contains(t, after, "ISSUE-NEW")
+}
+
 func TestRegressionQuit(t *testing.T) {
 	m := NewModel()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
