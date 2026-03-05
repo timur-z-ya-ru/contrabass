@@ -361,3 +361,193 @@ func TestStartEventBridge_NilEventsNoOp(t *testing.T) {
 	// No panic should occur
 	assert.True(t, true)
 }
+
+// TestModel_UnknownMessage verifies that unknown tea.Msg types increment
+// unknownEvents without corrupting model state or returning a command.
+func TestModel_UnknownMessage(t *testing.T) {
+	type customMsg struct{}
+
+	m := NewModel()
+	// Pre-populate state to verify it survives an unknown message.
+	m.agents["ISSUE-1"] = AgentRow{IssueID: "ISSUE-1", PID: 100}
+	m.backoffs["ISSUE-2"] = BackoffRow{IssueID: "ISSUE-2", Attempt: 1}
+	m.stats.TokensIn = 42
+
+	updated, cmd := m.Update(customMsg{})
+	model := updated.(Model)
+
+	assert.Nil(t, cmd, "unknown message should not produce a command")
+	assert.Equal(t, 1, model.unknownEvents)
+	assert.Len(t, model.agents, 1, "agents map should be unchanged")
+	assert.Len(t, model.backoffs, 1, "backoffs map should be unchanged")
+	assert.Contains(t, model.agents, "ISSUE-1")
+	assert.Contains(t, model.backoffs, "ISSUE-2")
+	assert.Equal(t, int64(42), model.stats.TokensIn, "stats should be unchanged")
+}
+
+// TestModel_EventWrongDataType verifies that each orchestrator event handler
+// gracefully handles receiving a valid EventPayload type that doesn't match
+// what the handler expects (no crash, no unknownEvents increment).
+func TestModel_EventWrongDataType(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType orchestrator.EventType
+		data      orchestrator.EventPayload
+	}{
+		{
+			name:      "StatusUpdate handler gets AgentStarted payload",
+			eventType: orchestrator.EventStatusUpdate,
+			data:      orchestrator.AgentStarted{PID: 1},
+		},
+		{
+			name:      "AgentStarted handler gets StatusUpdate payload",
+			eventType: orchestrator.EventAgentStarted,
+			data:      orchestrator.StatusUpdate{ModelName: "wrong"},
+		},
+		{
+			name:      "AgentFinished handler gets BackoffEnqueued payload",
+			eventType: orchestrator.EventAgentFinished,
+			data:      orchestrator.BackoffEnqueued{Attempt: 1},
+		},
+		{
+			name:      "BackoffEnqueued handler gets IssueReleased payload",
+			eventType: orchestrator.EventBackoffEnqueued,
+			data:      orchestrator.IssueReleased{Attempt: 1},
+		},
+		{
+			name:      "IssueReleased handler gets AgentFinished payload",
+			eventType: orchestrator.EventIssueReleased,
+			data:      orchestrator.AgentFinished{Attempt: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel()
+			event := orchestrator.OrchestratorEvent{
+				Type:      tt.eventType,
+				IssueID:   "ISSUE-MISMATCH",
+				Timestamp: time.Now(),
+				Data:      tt.data,
+			}
+
+			updated, cmd := m.Update(OrchestratorEventMsg{Event: event})
+			model := updated.(Model)
+
+			assert.Nil(t, cmd)
+			assert.Equal(t, 0, model.unknownEvents,
+				"type mismatch in known event handler should not increment unknownEvents")
+			assert.Empty(t, model.agents, "mismatched payload should not create agent rows")
+			assert.Empty(t, model.backoffs, "mismatched payload should not create backoff rows")
+		})
+	}
+}
+
+// TestModel_IssueReleasedClearsBoth verifies that an IssueReleased event
+// clears both the active agent row and any backoff row for that issue,
+// leaving unrelated issues untouched.
+func TestModel_IssueReleasedClearsBoth(t *testing.T) {
+	m := NewModel()
+	issueID := "ISSUE-BOTH"
+	now := time.Now()
+
+	// Set up active agent for this issue.
+	m.agents[issueID] = AgentRow{IssueID: issueID, PID: 999, Phase: types.StreamingTurn}
+	m.agentStartTime[issueID] = now.Add(-10 * time.Second)
+
+	// Set up backoff for the same issue.
+	m.backoffs[issueID] = BackoffRow{IssueID: issueID, Attempt: 2, Error: "overloaded"}
+	m.backoffRetryAt[issueID] = now.Add(30 * time.Second)
+
+	// Set up a different issue that should NOT be affected.
+	m.agents["ISSUE-OTHER"] = AgentRow{IssueID: "ISSUE-OTHER", PID: 888}
+	m.agentStartTime["ISSUE-OTHER"] = now
+
+	event := orchestrator.OrchestratorEvent{
+		Type:      orchestrator.EventIssueReleased,
+		IssueID:   issueID,
+		Timestamp: now,
+		Data:      orchestrator.IssueReleased{Attempt: 2},
+	}
+
+	updated, _ := m.Update(OrchestratorEventMsg{Event: event})
+	model := updated.(Model)
+
+	// The released issue should be completely gone from all maps.
+	_, hasAgent := model.agents[issueID]
+	assert.False(t, hasAgent, "agent row should be cleared for released issue")
+	_, hasStart := model.agentStartTime[issueID]
+	assert.False(t, hasStart, "agent start time should be cleared for released issue")
+	_, hasBackoff := model.backoffs[issueID]
+	assert.False(t, hasBackoff, "backoff row should be cleared for released issue")
+	_, hasRetry := model.backoffRetryAt[issueID]
+	assert.False(t, hasRetry, "backoff retry time should be cleared for released issue")
+
+	// The other issue should remain intact.
+	_, hasOther := model.agents["ISSUE-OTHER"]
+	assert.True(t, hasOther, "unrelated issue should not be affected")
+}
+
+// TestModel_RefreshDerivedFields_ZeroStartTime verifies that when the model's
+// startTime is zero, refreshDerivedFields replaces it with the provided time.
+func TestModel_RefreshDerivedFields_ZeroStartTime(t *testing.T) {
+	m := NewModel()
+	m.startTime = time.Time{} // explicit zero value
+
+	now := time.Now()
+	m = m.refreshDerivedFields(now)
+
+	assert.Equal(t, now, m.startTime,
+		"zero startTime should be replaced with current time")
+	assert.Equal(t, 0, m.stats.RuntimeSeconds,
+		"runtime should be 0 when startTime equals now")
+}
+
+// TestDurationString_Negative verifies that negative and zero durations
+// are clamped to "0s".
+func TestDurationString_Negative(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		want     string
+	}{
+		{name: "negative 5 seconds", duration: -5 * time.Second, want: "0s"},
+		{name: "negative 1 nanosecond", duration: -1, want: "0s"},
+		{name: "zero duration", duration: 0, want: "0s"},
+		{name: "positive 10 seconds", duration: 10 * time.Second, want: "10s"},
+		{name: "positive sub-second truncated", duration: 1500 * time.Millisecond, want: "1s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, durationString(tt.duration))
+		})
+	}
+}
+
+// TestStartEventBridge_NilInputs verifies that StartEventBridge handles
+// various nil input combinations gracefully without panicking.
+func TestStartEventBridge_NilInputs(t *testing.T) {
+	t.Run("nil context replaced with background", func(t *testing.T) {
+		ch := make(chan orchestrator.OrchestratorEvent)
+		p := tea.NewProgram(NewModel())
+
+		assert.NotPanics(t, func() {
+			StartEventBridge(nil, p, ch)
+		})
+
+		close(ch) // cleanup goroutine started by bridge
+	})
+
+	t.Run("all three arguments nil", func(t *testing.T) {
+		assert.NotPanics(t, func() {
+			StartEventBridge(nil, nil, nil)
+		})
+	})
+
+	t.Run("nil program and nil events together", func(t *testing.T) {
+		assert.NotPanics(t, func() {
+			StartEventBridge(context.Background(), nil, nil)
+		})
+	})
+}
