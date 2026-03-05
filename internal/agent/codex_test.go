@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -105,13 +106,12 @@ func TestProcessCrash(t *testing.T) {
 
 func TestMalformedJSON(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "malformed"), 2*time.Second)
-
 	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
 	require.NoError(t, err)
-
+	protocolErr := waitForEvent(t, proc.Events)
+	assert.Equal(t, "protocol/error", protocolErr.Type)
 	event := waitForEvent(t, proc.Events)
 	assert.Equal(t, "turn/completed", event.Type)
-
 	select {
 	case doneErr := <-proc.Done:
 		assert.NoError(t, doneErr)
@@ -212,6 +212,49 @@ func TestCodexRunner_HandshakeTimeout(t *testing.T) {
 	assert.Less(t, elapsed, 2*time.Second)
 }
 
+func TestCodexRunner_LargeJSONLLine(t *testing.T) {
+	runner := NewCodexRunner(helperCommand(t, "large-line"), 5*time.Second)
+
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	require.NoError(t, err)
+
+	events := collectEvents(t, proc.Events, proc.Done, 2, 10*time.Second)
+	require.Len(t, events, 2)
+
+	assert.Equal(t, "helper/large-line", events[0].Type)
+	payload, ok := events[0].Data["payload"].(string)
+	require.True(t, ok)
+	assert.Greater(t, len(payload), 2*1024*1024, "payload should be >2MB to verify large line handling")
+
+	assert.Equal(t, "turn/completed", events[1].Type)
+
+	assertDoneEventually(t, proc.Done)
+}
+
+func TestCodexRunner_MalformedJSONEmitsProtocolError(t *testing.T) {
+	runner := NewCodexRunner(helperCommand(t, "malformed"), 2*time.Second)
+
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	require.NoError(t, err)
+
+	events := collectEvents(t, proc.Events, proc.Done, 2, 5*time.Second)
+	require.Len(t, events, 2)
+
+	// First event must be the protocol error
+	assert.Equal(t, "protocol/error", events[0].Type)
+	errMsg, ok := events[0].Data["error"].(string)
+	require.True(t, ok)
+	assert.Contains(t, errMsg, "malformed JSON")
+	raw, ok := events[0].Data["raw"].(string)
+	require.True(t, ok)
+	assert.Contains(t, raw, "this is not json")
+
+	// Second event: valid turn/completed after the malformed line
+	assert.Equal(t, "turn/completed", events[1].Type)
+
+	assertDoneEventually(t, proc.Done)
+}
+
 func helperCommand(t *testing.T, mode string) string {
 	t.Helper()
 	exe, err := os.Executable()
@@ -275,7 +318,7 @@ func TestCodexHelperProcess(t *testing.T) {
 	require.NotEmpty(t, mode)
 
 	reader := bufio.NewScanner(os.Stdin)
-	reader.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	reader.Buffer(make([]byte, 0, 64*1024), maxJSONLineSize)
 	writer := bufio.NewWriter(os.Stdout)
 
 	var methods []string
@@ -330,6 +373,16 @@ func TestCodexHelperProcess(t *testing.T) {
 				_, err := writer.WriteString("this is not json\n")
 				require.NoError(t, err)
 				require.NoError(t, writer.Flush())
+				writeJSON(t, writer, map[string]interface{}{"method": "turn/completed", "params": map[string]interface{}{}})
+				return
+			case "large-line":
+				bigPayload := strings.Repeat("x", 3*1024*1024)
+				writeJSON(t, writer, map[string]interface{}{
+					"method": "helper/large-line",
+					"params": map[string]interface{}{
+						"payload": bigPayload,
+					},
+				})
 				writeJSON(t, writer, map[string]interface{}{"method": "turn/completed", "params": map[string]interface{}{}})
 				return
 			case "stderr-race":
