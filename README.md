@@ -4,6 +4,7 @@
 
 <img alt="Contrabass Logo" src="./.github/assets/contrabass.png" width="300px" />
 
+> **A project-level orchestrator for AI coding agents** <br />
 > Go & Charm stack implementation of OpenAI's Symphony ([openai/symphony](https://github.com/openai/symphony)) — manage work, not agents
 
 </div>
