@@ -4,8 +4,9 @@ import (
 	"sort"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/junhoyeo/symphony-charm/internal/orchestrator"
 	"github.com/junhoyeo/symphony-charm/internal/types"
@@ -14,10 +15,11 @@ import (
 const refreshInterval = time.Second
 
 type Model struct {
-	header  Header
-	table   Table
-	backoff Backoff
-	keys    KeyMap
+	header   Header
+	table    Table
+	backoff  Backoff
+	viewport viewport.Model
+	keys     KeyMap
 
 	width    int
 	height   int
@@ -33,10 +35,13 @@ type Model struct {
 
 func NewModel() Model {
 	now := time.Now()
+	vp := viewport.New()
+	vp.MouseWheelEnabled = true
 	return Model{
 		header:         NewHeader(),
 		table:          NewTable(),
 		backoff:        NewBackoff(),
+		viewport:       vp,
 		keys:           NewKeyMap(),
 		agents:         make(map[string]AgentRow),
 		agentStartTime: make(map[string]time.Time),
@@ -61,12 +66,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		}
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		return m, vpCmd
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.header = m.header.SetWidth(msg.Width)
 		m.table = m.table.SetWidth(msg.Width)
 		m.backoff = m.backoff.SetWidth(msg.Width)
+		headerH := lipgloss.Height(m.header.View())
+		m.viewport.SetWidth(msg.Width)
+		m.viewport.SetHeight(msg.Height - headerH - 1)
 	case OrchestratorEventMsg:
 		m = m.applyOrchestratorEvent(msg.Event)
 	case tickMsg:
@@ -81,8 +92,7 @@ func (m Model) View() tea.View {
 	rendered := lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.header.View(),
-		m.table.View(),
-		m.backoff.View(),
+		m.viewport.View(),
 	)
 	return tea.NewView(rendered)
 }
@@ -226,6 +236,11 @@ func (m Model) refreshDerivedFields(now time.Time) Model {
 func (m *Model) syncTables() {
 	m.table = m.table.Update(agentRowsSorted(m.agents))
 	m.backoff = m.backoff.Update(backoffRowsSorted(m.backoffs))
+	content := m.table.View()
+	if bv := m.backoff.View(); bv != "" {
+		content += "\n" + bv
+	}
+	m.viewport.SetContent(content)
 }
 
 func agentRowsSorted(items map[string]AgentRow) []AgentRow {
