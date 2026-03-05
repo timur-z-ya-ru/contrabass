@@ -145,9 +145,6 @@ func detectImageMode() termImageMode {
 // that reserve vertical space for the image rendered via tea.Raw().
 // For mosaic mode, it returns the half-block character art directly.
 func renderHeaderLogo() string {
-	if os.Getenv("TMUX") != "" {
-		return ""
-	}
 	headerLogoOnce.Do(func() {
 		mode := detectImageMode()
 		switch mode {
