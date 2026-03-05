@@ -1,4 +1,5 @@
 package tui
+
 import (
 	"bytes"
 	"fmt"
@@ -11,14 +12,28 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
 	"charm.land/lipgloss/v2"
 	"github.com/BourgeoisBear/rasterm"
 	"github.com/charmbracelet/x/mosaic"
 )
 
+// nativeImageRows is the number of terminal rows the native image occupies.
+const nativeImageRows = 15
+
+// nativeImageCols is the number of terminal columns the native image occupies.
+const nativeImageCols = 30
+
 var (
 	headerLogoOnce sync.Once
-	headerLogoArt  string
+	headerLogoArt  string // mosaic fallback art (text-safe, passes through cell renderer)
+)
+
+// nativeImageEscape holds the pre-rendered Kitty/iTerm escape sequence for the logo.
+// This is NOT safe to embed in View() — it must be sent via tea.Raw().
+var (
+	nativeImageOnce   sync.Once
+	nativeImageEscape string // raw escape sequence for native image rendering
 )
 
 type HeaderData struct {
@@ -124,11 +139,42 @@ func detectImageMode() termImageMode {
 	})
 	return detectedImageMode
 }
+
+// renderHeaderLogo returns the logo art for embedding in View().
+// For native image modes (Kitty/iTerm), it returns blank placeholder lines
+// that reserve vertical space for the image rendered via tea.Raw().
+// For mosaic mode, it returns the half-block character art directly.
 func renderHeaderLogo() string {
 	if os.Getenv("TMUX") != "" {
 		return ""
 	}
 	headerLogoOnce.Do(func() {
+		mode := detectImageMode()
+		switch mode {
+		case imageModeKitty, imageModeIterm:
+			// Return blank placeholder lines to reserve space for the native image.
+			// The actual image is rendered via tea.Raw() bypassing the cell renderer.
+			// Each line is a single space to ensure the lines are preserved.
+			lines := make([]string, nativeImageRows)
+			for i := range lines {
+				lines[i] = ""
+			}
+			headerLogoArt = strings.Join(lines, "\n")
+		default:
+			headerLogoArt = renderMosaicLogo()
+		}
+	})
+	return headerLogoArt
+}
+
+// initNativeImageEscape pre-renders the native image escape sequence once.
+// Must be called before buildNativeImageRaw() is useful.
+func initNativeImageEscape() {
+	nativeImageOnce.Do(func() {
+		mode := detectImageMode()
+		if mode == imageModeMosaic {
+			return
+		}
 		f, err := os.Open(".github/assets/contrabass.png")
 		if err != nil {
 			return
@@ -138,59 +184,86 @@ func renderHeaderLogo() string {
 		if err != nil {
 			return
 		}
-		// Crop to content bounds (remove transparent padding)
 		img = cropToContent(img)
-		mode := detectImageMode()
 		switch mode {
 		case imageModeKitty:
-			headerLogoArt = renderKittyImage(img)
+			nativeImageEscape = buildKittyEscape(img)
 		case imageModeIterm:
-			headerLogoArt = renderItermImage(img)
-		default:
-			headerLogoArt = renderMosaicImage(img)
+			nativeImageEscape = buildItermEscape(img)
 		}
 	})
-	return headerLogoArt
 }
 
-// renderKittyImage renders the image using the Kitty graphics protocol.
-// The image is sent as base64-encoded PNG with display size specified in terminal cells.
-func renderKittyImage(img image.Image) string {
-	// Resize for quality — send a reasonably sized image to the terminal.
-	// The terminal will handle the final display scaling.
-	// Use a square image since the terminal respects aspect ratio.
+// buildNativeImageRaw returns the complete escape sequence string for placing
+// the native image at the correct position in alt screen, suitable for tea.Raw().
+// Returns empty string if native image is not available.
+func buildNativeImageRaw() string {
+	initNativeImageEscape()
+	if nativeImageEscape == "" {
+		return ""
+	}
+	// In alt screen, the header box has a 1-char rounded border on top,
+	// plus 1 line of padding. The image should be placed starting at:
+	//   row 2 (1-indexed): inside the border top
+	//   col 3 (1-indexed): inside border (1) + padding (1) + content start
+	//
+	// Cursor positioning sequence:
+	//   \x1b[s        — save cursor position
+	//   \x1b[2;3H     — move to row 2, col 3
+	//   <image data>  — Kitty/iTerm escape sequence
+	//   \x1b[u        — restore cursor position
+	return "\x1b[s\x1b[2;3H" + nativeImageEscape + "\x1b[u"
+}
+
+// buildKittyEscape renders the image using the Kitty graphics protocol.
+// Returns the raw escape sequence string (NOT safe for View()).
+func buildKittyEscape(img image.Image) string {
 	img = resizeImage(img, 200, 200)
 	img = compositeOnBackground(img)
 
 	var buf bytes.Buffer
 	opts := rasterm.KittyImgOpts{
-		DstCols: 30, // display width in terminal columns
-		DstRows: 15, // display height in terminal rows
+		DstCols: nativeImageCols,
+		DstRows: nativeImageRows,
+		ImageId: 1, // persistent image ID for re-placement
 	}
 	if err := rasterm.KittyWriteImage(&buf, img, opts); err != nil {
-		// Fall back to mosaic on error
-		return renderMosaicImage(img)
+		return ""
 	}
 	return buf.String()
 }
 
-// renderItermImage renders the image using the iTerm2/WezTerm inline image protocol.
-func renderItermImage(img image.Image) string {
-	// Resize for quality — send a reasonably sized image.
+// buildItermEscape renders the image using the iTerm2/WezTerm inline image protocol.
+// Returns the raw escape sequence string (NOT safe for View()).
+func buildItermEscape(img image.Image) string {
 	img = resizeImage(img, 200, 200)
 	img = compositeOnBackground(img)
 
 	var buf bytes.Buffer
 	opts := rasterm.ItermImgOpts{
 		DisplayInline: true,
-		Width:         "30",   // 30 character cells wide
-		Height:        "auto", // auto height preserving aspect ratio
+		Width:         fmt.Sprintf("%d", nativeImageCols),
+		Height:        fmt.Sprintf("%d", nativeImageRows),
 	}
 	if err := rasterm.ItermWriteImageWithOptions(&buf, img, opts); err != nil {
-		// Fall back to mosaic on error
-		return renderMosaicImage(img)
+		return ""
 	}
 	return buf.String()
+}
+
+// renderMosaicLogo loads and renders the logo as mosaic half-block characters.
+func renderMosaicLogo() string {
+	f, err := os.Open(".github/assets/contrabass.png")
+	if err != nil {
+		return ""
+	}
+	defer f.Close() //nolint:errcheck
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return ""
+	}
+	img = cropToContent(img)
+	return renderMosaicImage(img)
 }
 
 // renderMosaicImage renders the image using mosaic half-block characters (fallback).
@@ -220,8 +293,8 @@ func resizeImage(src image.Image, targetW, targetH int) image.Image {
 	for y := 0; y < targetH; y++ {
 		for x := 0; x < targetW; x++ {
 			// Map destination pixel to source coordinates (float)
-			srcXf := (float64(x) + 0.5) * float64(srcW) / float64(targetW) - 0.5
-			srcYf := (float64(y) + 0.5) * float64(srcH) / float64(targetH) - 0.5
+			srcXf := (float64(x)+0.5)*float64(srcW)/float64(targetW) - 0.5
+			srcYf := (float64(y)+0.5)*float64(srcH)/float64(targetH) - 0.5
 
 			// Clamp to valid range
 			if srcXf < 0 {
@@ -274,6 +347,7 @@ func resizeImage(src image.Image, targetW, targetH int) image.Image {
 	}
 	return dst
 }
+
 // cropToContent finds the bounding box of non-transparent pixels and crops to it.
 func cropToContent(src image.Image) image.Image {
 	b := src.Bounds()
@@ -309,6 +383,7 @@ func cropToContent(src image.Image) image.Image {
 	draw.Draw(cropped, cropped.Bounds(), src, cropRect.Min, draw.Src)
 	return cropped
 }
+
 // compositeOnBackground blends the image onto a dark background,
 // handling transparency properly for terminal rendering.
 func compositeOnBackground(src image.Image) image.Image {

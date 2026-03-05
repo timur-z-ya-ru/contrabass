@@ -32,6 +32,8 @@ type Model struct {
 	height   int
 	quitting bool
 
+
+	imageDirty bool
 	agents         map[string]AgentRow
 	agentStartTime map[string]time.Time
 	backoffs       map[string]BackoffRow
@@ -68,7 +70,7 @@ func NewModel() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(doTick(), m.spinner.Tick)
+	return tea.Batch(doTick(), m.spinner.Tick, emitNativeImageCmd())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -105,6 +107,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(msg.Height - headerH - helpH)
 		m.syncTables()
+		m.imageDirty = true
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -114,7 +117,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.applyOrchestratorEvent(msg.Event)
 	case tickMsg:
 		m = m.refreshDerivedFields(time.Time(msg))
-		return m, doTick()
+		cmds := []tea.Cmd{doTick()}
+		if m.imageDirty {
+			m.imageDirty = false
+			if rawSeq := buildNativeImageRaw(); rawSeq != "" {
+				cmds = append(cmds, tea.Raw(rawSeq))
+			}
+		}
+		return m, tea.Batch(cmds...)
 	default:
 		m.unknownEvents++
 		log.Debug("unhandled tea.Msg type", "type", fmt.Sprintf("%T", msg))
@@ -159,6 +169,17 @@ func doTick() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+// emitNativeImageCmd returns a tea.Cmd that emits the native image escape
+// sequence via tea.Raw(), bypassing bubbletea's cell-based renderer.
+// Returns nil if native image rendering is not available.
+func emitNativeImageCmd() tea.Cmd {
+	rawSeq := buildNativeImageRaw()
+	if rawSeq == "" {
+		return nil
+	}
+	return tea.Raw(rawSeq)
 }
 
 func (m Model) applyOrchestratorEvent(event orchestrator.OrchestratorEvent) Model {
