@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/junhoyeo/symphony-charm/internal/agent"
+	"github.com/junhoyeo/symphony-charm/internal/config"
 	"github.com/junhoyeo/symphony-charm/internal/orchestrator"
+	"github.com/junhoyeo/symphony-charm/internal/types"
 )
 
 func TestRootCommandHelp(t *testing.T) {
@@ -213,4 +218,269 @@ func restoreRunTUITestHooks(t *testing.T) {
 		startTUIEventBridge = originalStartTUIEventBridge
 		runTUIShutdownTimeout = originalRunTUIShutdownTimeout
 	})
+}
+
+// --- Stub types for orchestrator integration tests ---
+
+type stubTracker struct{}
+
+func (s *stubTracker) FetchIssues(_ context.Context) ([]types.Issue, error) { return nil, nil }
+func (s *stubTracker) ClaimIssue(_ context.Context, _ string) error         { return nil }
+func (s *stubTracker) ReleaseIssue(_ context.Context, _ string) error       { return nil }
+func (s *stubTracker) UpdateIssueState(_ context.Context, _ string, _ types.IssueState) error {
+	return nil
+}
+func (s *stubTracker) PostComment(_ context.Context, _, _ string) error { return nil }
+
+type stubWorkspace struct{}
+
+func (s *stubWorkspace) Create(_ context.Context, _ types.Issue) (string, error) { return "", nil }
+func (s *stubWorkspace) Cleanup(_ context.Context, _ string) error               { return nil }
+func (s *stubWorkspace) CleanupAll(_ context.Context) error                      { return nil }
+
+type stubAgentRunner struct{}
+
+func (s *stubAgentRunner) Start(_ context.Context, _ types.Issue, _, _ string) (*agent.AgentProcess, error) {
+	return nil, nil
+}
+func (s *stubAgentRunner) Stop(_ *agent.AgentProcess) error { return nil }
+
+type stubConfigProvider struct{ cfg *config.WorkflowConfig }
+
+func (s *stubConfigProvider) GetConfig() *config.WorkflowConfig { return s.cfg }
+
+// newTestOrchestrator creates an Orchestrator backed by no-op stubs so that
+// orch.Run can execute its poll loop without panicking on nil dependencies.
+func newTestOrchestrator(t *testing.T) *orchestrator.Orchestrator {
+	t.Helper()
+	return orchestrator.NewOrchestrator(
+		&stubTracker{},
+		&stubWorkspace{},
+		&stubAgentRunner{},
+		&stubConfigProvider{cfg: &config.WorkflowConfig{}},
+		nil,
+	)
+}
+
+// --- Tests for parseLogLevel ---
+
+func TestParseLogLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  log.Level
+	}{
+		{"debug", "debug", log.DebugLevel},
+		{"debug uppercase", "DEBUG", log.DebugLevel},
+		{"debug mixed case", "Debug", log.DebugLevel},
+		{"warn", "warn", log.WarnLevel},
+		{"warn mixed case", "Warn", log.WarnLevel},
+		{"error", "error", log.ErrorLevel},
+		{"error uppercase", "ERROR", log.ErrorLevel},
+		{"info explicit", "info", log.InfoLevel},
+		{"default on unknown", "trace", log.InfoLevel},
+		{"default on empty", "", log.InfoLevel},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseLogLevel(tt.input))
+		})
+	}
+}
+
+// --- Tests for projectSlug ---
+
+func TestProjectSlug(t *testing.T) {
+	tests := []struct {
+		name    string
+		envSlug string
+		cfg     *config.WorkflowConfig
+		want    string
+	}{
+		{
+			name:    "env override takes precedence",
+			envSlug: "env-slug",
+			cfg:     &config.WorkflowConfig{ProjectURLRaw: "https://linear.app/team/project/from-config"},
+			want:    "env-slug",
+		},
+		{
+			name: "URL last segment",
+			cfg:  &config.WorkflowConfig{ProjectURLRaw: "https://linear.app/team/project/my-project"},
+			want: "my-project",
+		},
+		{
+			name: "trailing slash stripped",
+			cfg:  &config.WorkflowConfig{ProjectURLRaw: "https://linear.app/team/project/slug-test/"},
+			want: "slug-test",
+		},
+		{
+			name: "empty URL returns empty",
+			cfg:  &config.WorkflowConfig{},
+			want: "",
+		},
+		{
+			name: "tracker project URL fallback",
+			cfg:  &config.WorkflowConfig{Tracker: config.TrackerConfig{ProjectURL: "https://linear.app/team/proj"}},
+			want: "proj",
+		},
+		{
+			name: "single segment URL",
+			cfg:  &config.WorkflowConfig{ProjectURLRaw: "slug-only"},
+			want: "slug-only",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LINEAR_PROJECT_SLUG", tt.envSlug)
+			assert.Equal(t, tt.want, projectSlug(tt.cfg))
+		})
+	}
+}
+
+// --- Tests for run ---
+
+func TestRun_ConfigParseError(t *testing.T) {
+	err := run(filepath.Join(t.TempDir(), "no-such-file.md"), false, "", "info", false)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "parsing workflow config")
+}
+
+func TestRun_WatcherError(t *testing.T) {
+	// The watcher error path in run() requires config.ParseWorkflow to succeed
+	// on the first call but config.NewWatcher to fail on its internal re-parse.
+	// Since both calls are synchronous on the same file path, the only way to
+	// reach the "creating config watcher" error is if the file disappears
+	// between the two calls or if fsnotify.NewWatcher() fails (kernel resource
+	// exhaustion). Neither can be reliably triggered without production code
+	// changes to accept a mockable watcher constructor.
+	t.Skip("watcher error path requires fsnotify.NewWatcher failure; not reachable without production code changes")
+}
+
+// --- Tests for runDryRun ---
+
+func TestRunDryRun(t *testing.T) {
+	// The orchestrator's first runCycle emits a StatusUpdate event. The goroutine
+	// inside runDryRun reads that event and cancels the derived context, causing
+	// orch.Run to observe ctx.Done() and return nil.
+	orch := newTestOrchestrator(t)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runDryRun(context.Background(), orch)
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("runDryRun did not complete within 10s")
+	}
+}
+
+// --- Tests for runHeadless ---
+
+func TestRunHeadless(t *testing.T) {
+	orch := newTestOrchestrator(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	logger := log.NewWithOptions(io.Discard, log.Options{})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runHeadless(ctx, orch, logger)
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("runHeadless did not complete within 5s")
+	}
+}
+
+// --- Additional runTUI branch coverage ---
+
+func TestRunTUI_OrchestratorErrorNoTUIError(t *testing.T) {
+	orch := orchestrator.NewOrchestrator(nil, nil, nil, nil, nil)
+
+	orchErr := errors.New("orch failed alone")
+	restoreRunTUITestHooks(t)
+
+	runTUIProgram = func(_ *tea.Program) (tea.Model, error) {
+		return nil, nil // TUI succeeds
+	}
+	runTUIOrchestrator = func(_ context.Context, _ *orchestrator.Orchestrator) error {
+		return orchErr
+	}
+	startTUIEventBridge = func(_ context.Context, _ *tea.Program, _ <-chan orchestrator.OrchestratorEvent) {}
+	runTUIShutdownTimeout = 50 * time.Millisecond
+
+	err := runTUI(context.Background(), orch)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, orchErr)
+	assert.NotContains(t, err.Error(), "tui error")
+}
+
+func TestRunTUI_SuccessPath(t *testing.T) {
+	orch := orchestrator.NewOrchestrator(nil, nil, nil, nil, nil)
+
+	restoreRunTUITestHooks(t)
+
+	runTUIProgram = func(_ *tea.Program) (tea.Model, error) {
+		return nil, nil
+	}
+	runTUIOrchestrator = func(_ context.Context, _ *orchestrator.Orchestrator) error {
+		return nil
+	}
+	startTUIEventBridge = func(_ context.Context, _ *tea.Program, _ <-chan orchestrator.OrchestratorEvent) {}
+	runTUIShutdownTimeout = 50 * time.Millisecond
+
+	err := runTUI(context.Background(), orch)
+	require.NoError(t, err)
+}
+
+func TestRunTUI_TimeoutNoTUIError(t *testing.T) {
+	orch := orchestrator.NewOrchestrator(nil, nil, nil, nil, nil)
+
+	restoreRunTUITestHooks(t)
+
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+
+	runTUIProgram = func(_ *tea.Program) (tea.Model, error) {
+		return nil, nil // TUI succeeds
+	}
+	runTUIOrchestrator = func(_ context.Context, _ *orchestrator.Orchestrator) error {
+		<-block
+		return nil
+	}
+	startTUIEventBridge = func(_ context.Context, _ *tea.Program, _ <-chan orchestrator.OrchestratorEvent) {}
+	runTUIShutdownTimeout = 10 * time.Millisecond
+
+	err := runTUI(context.Background(), orch)
+	require.Error(t, err)
+	assert.Equal(t, "timed out waiting for orchestrator shutdown", err.Error())
+}
+
+func TestRunTUI_TUIErrorOrchestratorSuccess(t *testing.T) {
+	orch := orchestrator.NewOrchestrator(nil, nil, nil, nil, nil)
+
+	tuiErr := errors.New("tui rendering failed")
+	restoreRunTUITestHooks(t)
+
+	runTUIProgram = func(_ *tea.Program) (tea.Model, error) {
+		return nil, tuiErr
+	}
+	runTUIOrchestrator = func(_ context.Context, _ *orchestrator.Orchestrator) error {
+		return nil
+	}
+	startTUIEventBridge = func(_ context.Context, _ *tea.Program, _ <-chan orchestrator.OrchestratorEvent) {}
+	runTUIShutdownTimeout = 50 * time.Millisecond
+
+	err := runTUI(context.Background(), orch)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, tuiErr)
 }
