@@ -38,7 +38,33 @@ type codexProcess struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	done   chan error
-	stderr *bytes.Buffer
+	stderr *safeBuffer
+
+	doneOnce sync.Once
+}
+
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (p *codexProcess) finish(err error) {
+	p.doneOnce.Do(func() {
+		p.done <- err
+		close(p.done)
+	})
 }
 
 func NewCodexRunner(binaryPath string, timeout time.Duration) *CodexRunner {
@@ -82,7 +108,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 		return nil, fmt.Errorf("start codex process: %w", err)
 	}
 
-	stderrBuf := &bytes.Buffer{}
+	stderrBuf := &safeBuffer{}
 	go func() {
 		_, _ = io.Copy(stderrBuf, stderrPipe)
 	}()
@@ -182,7 +208,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 		sessionID = threadID + "-" + turnID
 	}
 
-	events := make(chan types.AgentEvent, 64)
+	events := make(chan types.AgentEvent, 128)
 
 	go r.streamEventsAndWait(process, scanner, events)
 
@@ -254,23 +280,27 @@ func (r *CodexRunner) streamEventsAndWait(process *codexProcess, scanner *bufio.
 			data = params
 		}
 
-		events <- types.AgentEvent{
+		event := types.AgentEvent{
 			Type:      method,
 			Data:      data,
 			Timestamp: time.Now(),
+		}
+
+		select {
+		case events <- event:
+		default:
 		}
 	}
 
 	scanErr := scanner.Err()
 	waitErr := process.cmd.Wait()
-	if scanErr != nil {
-		process.done <- scanErr
-	} else if waitErr != nil {
-		process.done <- r.withStderr(waitErr, process.stderr)
+	if waitErr != nil {
+		process.finish(r.withStderr(waitErr, process.stderr))
+	} else if scanErr != nil {
+		process.finish(scanErr)
 	} else {
-		process.done <- nil
+		process.finish(nil)
 	}
-	close(process.done)
 
 	r.mu.Lock()
 	delete(r.procs, process.cmd.Process.Pid)
@@ -284,7 +314,7 @@ func (r *CodexRunner) cleanupOnStartFailure(process *codexProcess) {
 	if process.cmd.Process != nil {
 		_ = process.cmd.Process.Kill()
 	}
-	_, _ = process.cmd.Process.Wait()
+	_ = process.cmd.Wait()
 
 	r.mu.Lock()
 	delete(r.procs, process.cmd.Process.Pid)
@@ -341,7 +371,7 @@ func (r *CodexRunner) sendMessage(writer *bufio.Writer, msg map[string]interface
 	return nil
 }
 
-func (r *CodexRunner) withStderr(err error, stderr *bytes.Buffer) error {
+func (r *CodexRunner) withStderr(err error, stderr interface{ String() string }) error {
 	if err == nil {
 		return nil
 	}
