@@ -3,8 +3,9 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
+
+	"github.com/charmbracelet/log"
 )
 
 const shutdownPollInterval = 10 * time.Millisecond
@@ -97,7 +98,7 @@ func forceKillRemaining(orch *Orchestrator, logger *log.Logger) {
 		}
 
 		if err := orch.agent.Stop(run.process); err != nil && logger != nil {
-			logger.Printf("force-stop failed for issue %s: %v", run.issue.ID, err)
+			logger.Warn("force-stop failed", "issue_id", run.issue.ID, "err", err)
 		}
 	}
 }

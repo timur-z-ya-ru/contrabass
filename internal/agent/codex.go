@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/junhoyeo/symphony-charm/internal/types"
 )
 
@@ -75,7 +75,7 @@ func NewCodexRunner(binaryPath string, timeout time.Duration) *CodexRunner {
 	return &CodexRunner{
 		binaryPath: binaryPath,
 		timeout:    timeout,
-		logger:     log.New(io.Discard, "", 0),
+		logger:     log.NewWithOptions(io.Discard, log.Options{}),
 		procs:      make(map[int]*codexProcess),
 	}
 }
@@ -266,7 +266,7 @@ func (r *CodexRunner) streamEventsAndWait(process *codexProcess, scanner *bufio.
 		line := scanner.Text()
 		msg := map[string]interface{}{}
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			r.logger.Printf("codex malformed JSON: %v", err)
+			r.logger.Warn("codex malformed JSON", "err", err)
 			continue
 		}
 
@@ -334,7 +334,7 @@ func (r *CodexRunner) awaitResponse(scanner *bufio.Scanner, requestID int) (map[
 
 		msg := map[string]interface{}{}
 		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			r.logger.Printf("codex malformed JSON while waiting response: %v", err)
+			r.logger.Warn("codex malformed JSON while waiting response", "err", err)
 			continue
 		}
 
