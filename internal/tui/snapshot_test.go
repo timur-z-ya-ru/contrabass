@@ -16,7 +16,7 @@ import (
 var update = flag.Bool("update", false, "update golden files")
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-var spinnerRegex = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]`)
+var spinnerRegex = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷]`)
 
 func stripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
