@@ -154,8 +154,9 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 }
 
 // runDryRun starts the orchestrator and exits after the first emitted event.
+// If no event arrives within the timeout, it logs a warning and returns nil.
 func runDryRun(ctx context.Context, orch *orchestrator.Orchestrator) error {
-	dryCtx, cancel := context.WithCancel(ctx)
+	dryCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	go func() {
@@ -164,7 +165,12 @@ func runDryRun(ctx context.Context, orch *orchestrator.Orchestrator) error {
 		}
 	}()
 
-	return orch.Run(dryCtx)
+	err := orch.Run(dryCtx)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		log.Warn("dry-run timeout: no events received within 60s")
+		return nil
+	}
+	return err
 }
 
 // runHeadless runs the orchestrator without TUI, logging events to the logger.
