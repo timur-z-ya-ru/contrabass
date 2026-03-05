@@ -125,8 +125,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 	r.mu.Unlock()
 
 	writer := bufio.NewWriter(stdin)
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	reader := bufio.NewReader(stdout)
 
 	if err := r.sendMessage(writer, map[string]interface{}{
 		"id":     initializeRequestID,
@@ -144,7 +143,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 		return nil, err
 	}
 
-	if _, err := r.awaitResponse(scanner, initializeRequestID); err != nil {
+	if _, err := r.awaitResponse(reader, initializeRequestID); err != nil {
 		r.cleanupOnStartFailure(process)
 		return nil, r.withStderr(err, stderrBuf)
 	}
@@ -168,7 +167,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 		return nil, err
 	}
 
-	threadResult, err := r.awaitResponse(scanner, threadStartRequestID)
+	threadResult, err := r.awaitResponse(reader, threadStartRequestID)
 	if err != nil {
 		r.cleanupOnStartFailure(process)
 		return nil, r.withStderr(err, stderrBuf)
@@ -196,7 +195,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 		return nil, err
 	}
 
-	turnResult, err := r.awaitResponse(scanner, turnStartRequestID)
+	turnResult, err := r.awaitResponse(reader, turnStartRequestID)
 	if err != nil {
 		r.cleanupOnStartFailure(process)
 		return nil, r.withStderr(err, stderrBuf)
@@ -210,7 +209,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 
 	events := make(chan types.AgentEvent, 128)
 
-	go r.streamEventsAndWait(process, scanner, events)
+	go r.streamEventsAndWait(process, reader, events)
 
 	return &AgentProcess{
 		PID:       cmd.Process.Pid,
@@ -259,45 +258,50 @@ func (r *CodexRunner) Stop(proc *AgentProcess) error {
 	}
 }
 
-func (r *CodexRunner) streamEventsAndWait(process *codexProcess, scanner *bufio.Scanner, events chan types.AgentEvent) {
+func (r *CodexRunner) streamEventsAndWait(process *codexProcess, reader *bufio.Reader, events chan types.AgentEvent) {
 	defer close(events)
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		msg := map[string]interface{}{}
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			r.logger.Warn("codex malformed JSON", "err", err)
-			continue
+	var readErr error
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			msg := map[string]interface{}{}
+			if err := json.Unmarshal(bytes.TrimSpace(line), &msg); err != nil {
+				r.logger.Warn("codex malformed JSON", "err", err)
+			} else {
+				method, _ := msg["method"].(string)
+				if method != "" {
+					data := map[string]interface{}{}
+					if params, ok := msg["params"].(map[string]interface{}); ok {
+						data = params
+					}
+
+					event := types.AgentEvent{
+						Type:      method,
+						Data:      data,
+						Timestamp: time.Now(),
+					}
+
+					select {
+					case events <- event:
+					default:
+					}
+				}
+			}
 		}
 
-		method, _ := msg["method"].(string)
-		if method == "" {
-			continue
-		}
-
-		data := map[string]interface{}{}
-		if params, ok := msg["params"].(map[string]interface{}); ok {
-			data = params
-		}
-
-		event := types.AgentEvent{
-			Type:      method,
-			Data:      data,
-			Timestamp: time.Now(),
-		}
-
-		select {
-		case events <- event:
-		default:
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				readErr = err
+			}
+			break
 		}
 	}
-
-	scanErr := scanner.Err()
 	waitErr := process.cmd.Wait()
 	if waitErr != nil {
 		process.finish(r.withStderr(waitErr, process.stderr))
-	} else if scanErr != nil {
-		process.finish(scanErr)
+	} else if readErr != nil {
+		process.finish(readErr)
 	} else {
 		process.finish(nil)
 	}
@@ -321,19 +325,30 @@ func (r *CodexRunner) cleanupOnStartFailure(process *codexProcess) {
 	r.mu.Unlock()
 }
 
-func (r *CodexRunner) awaitResponse(scanner *bufio.Scanner, requestID int) (map[string]interface{}, error) {
+func (r *CodexRunner) awaitResponse(reader *bufio.Reader, requestID int) (map[string]interface{}, error) {
 	deadline := time.Now().Add(r.timeout)
 
-	for time.Now().Before(deadline) {
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return nil, err
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("handshake timeout waiting for response id=%d after %s", requestID, r.timeout)
+		}
+
+		line, err := r.readLineWithTimeout(reader, remaining)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			if errors.Is(err, io.EOF) {
+				return nil, io.EOF
 			}
-			return nil, io.EOF
+			continue
 		}
 
 		msg := map[string]interface{}{}
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+		if err := json.Unmarshal(trimmed, &msg); err != nil {
 			r.logger.Warn("codex malformed JSON while waiting response", "err", err)
 			continue
 		}
@@ -353,8 +368,29 @@ func (r *CodexRunner) awaitResponse(scanner *bufio.Scanner, requestID int) (map[
 
 		return map[string]interface{}{}, nil
 	}
+}
 
-	return nil, fmt.Errorf("timeout waiting for response id=%d", requestID)
+func (r *CodexRunner) readLineWithTimeout(reader *bufio.Reader, timeout time.Duration) ([]byte, error) {
+	type lineReadResult struct {
+		line []byte
+		err  error
+	}
+
+	resultCh := make(chan lineReadResult, 1)
+	go func() {
+		line, err := reader.ReadBytes('\n')
+		resultCh <- lineReadResult{line: line, err: err}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case result := <-resultCh:
+		return result.line, result.err
+	case <-timer.C:
+		return nil, fmt.Errorf("handshake timeout waiting for read after %s", timeout)
+	}
 }
 
 func (r *CodexRunner) sendMessage(writer *bufio.Writer, msg map[string]interface{}) error {

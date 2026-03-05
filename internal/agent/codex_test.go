@@ -68,15 +68,18 @@ func TestEventParsing(t *testing.T) {
 }
 
 func TestTimeoutKillsProcess(t *testing.T) {
-	runner := NewCodexRunner(helperCommand(t, "hang"), 100*time.Millisecond)
+	runner := NewCodexRunner(helperCommand(t, "hang"), 2*time.Second)
 
 	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
 	require.NoError(t, err)
 
+	stopTimeout := 100 * time.Millisecond
+	runner.timeout = stopTimeout
+
 	start := time.Now()
 	require.NoError(t, runner.Stop(proc))
 	elapsed := time.Since(start)
-	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond)
+	assert.GreaterOrEqual(t, elapsed, stopTimeout)
 	assert.Less(t, elapsed, 3*time.Second)
 
 	select {
@@ -118,7 +121,7 @@ func TestMalformedJSON(t *testing.T) {
 }
 
 func TestCodexRunner_ConcurrentStartStop(t *testing.T) {
-	runner := NewCodexRunner(helperCommand(t, "stderr-race"), 500*time.Millisecond)
+	runner := NewCodexRunner(helperCommand(t, "stderr-race"), 2*time.Second)
 	workspace := t.TempDir()
 
 	const attempts = 100
@@ -192,6 +195,21 @@ func TestCodexRunner_StopWithFullEventBuffer(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("expected done channel to be signaled")
 	}
+}
+
+func TestCodexRunner_HandshakeTimeout(t *testing.T) {
+	timeout := 150 * time.Millisecond
+	runner := NewCodexRunner(helperCommand(t, "silent-handshake"), timeout)
+
+	start := time.Now()
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Nil(t, proc)
+	assert.Contains(t, err.Error(), "handshake timeout")
+	assert.GreaterOrEqual(t, elapsed, timeout)
+	assert.Less(t, elapsed, 2*time.Second)
 }
 
 func helperCommand(t *testing.T, mode string) string {
@@ -276,6 +294,9 @@ func TestCodexHelperProcess(t *testing.T) {
 
 		switch method {
 		case "initialize":
+			if mode == "silent-handshake" {
+				continue
+			}
 			writeJSON(t, writer, map[string]interface{}{"id": msg["id"], "result": map[string]interface{}{"ok": true}})
 		case "initialized":
 		case "thread/start":
