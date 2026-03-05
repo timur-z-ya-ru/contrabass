@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	charm.land/bubbletea/v2 v2.0.1
 	github.com/charmbracelet/log v0.4.2
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/osteele/liquid v1.8.1
 	github.com/stretchr/testify v1.11.1
 	gopkg.in/yaml.v3 v3.0.1
