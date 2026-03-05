@@ -1,0 +1,86 @@
+package tui
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestHeaderViewContainsTitle(t *testing.T) {
+	h := NewHeader()
+	h = h.Update(HeaderData{RunningAgents: 3, MaxAgents: 10, RuntimeSeconds: 154})
+	out := h.View()
+	assert.Contains(t, out, "SYMPHONY STATUS")
+	assert.Contains(t, out, "3/10")
+}
+
+func TestFormatRuntime(t *testing.T) {
+	tests := []struct {
+		name    string
+		seconds int
+		want    string
+	}{
+		{"zero", 0, "0s"},
+		{"seconds only", 45, "45s"},
+		{"one minute", 60, "1m 0s"},
+		{"mixed", 154, "2m 34s"},
+		{"negative clamped", -5, "0s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatRuntime(tt.seconds))
+		})
+	}
+}
+
+func TestFormatTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		n    int64
+		want string
+	}{
+		{"zero", 0, "0"},
+		{"small", 999, "999"},
+		{"thousands", 1234, "1,234"},
+		{"millions", 1234567, "1,234,567"},
+		{"negative", -1234, "-1,234"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatTokens(tt.n))
+		})
+	}
+}
+
+func TestFormatThroughput(t *testing.T) {
+	tests := []struct {
+		name string
+		tps  float64
+		want string
+	}{
+		{"zero", 0.0, "0.0 tok/s"},
+		{"small", 12.3, "12.3 tok/s"},
+		{"large", 1234.5, "1,234.5 tok/s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatThroughput(tt.tps))
+		})
+	}
+}
+
+func TestHeaderZeroData(t *testing.T) {
+	h := NewHeader()
+	assert.NotPanics(t, func() {
+		out := h.View()
+		assert.Contains(t, out, "SYMPHONY STATUS")
+		assert.Contains(t, out, "0/0")
+	})
+}
+
+func TestHeaderSetWidth(t *testing.T) {
+	h := NewHeader().SetWidth(80)
+	h = h.Update(HeaderData{RunningAgents: 1, MaxAgents: 5})
+	out := h.View()
+	assert.Contains(t, out, "SYMPHONY STATUS")
+}
