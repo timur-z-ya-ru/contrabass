@@ -208,7 +208,7 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 		sessionID = threadID + "-" + turnID
 	}
 
-	events := make(chan types.AgentEvent, 64)
+	events := make(chan types.AgentEvent, 128)
 
 	go r.streamEventsAndWait(process, scanner, events)
 
@@ -280,10 +280,15 @@ func (r *CodexRunner) streamEventsAndWait(process *codexProcess, scanner *bufio.
 			data = params
 		}
 
-		events <- types.AgentEvent{
+		event := types.AgentEvent{
 			Type:      method,
 			Data:      data,
 			Timestamp: time.Now(),
+		}
+
+		select {
+		case events <- event:
+		default:
 		}
 	}
 

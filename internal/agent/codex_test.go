@@ -169,6 +169,31 @@ func TestCodexRunner_ConcurrentStartStop(t *testing.T) {
 	}
 }
 
+func TestCodexRunner_StopWithFullEventBuffer(t *testing.T) {
+	runner := NewCodexRunner(helperCommand(t, "flood-events"), 3*time.Second)
+
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	require.NoError(t, err)
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- runner.Stop(proc)
+	}()
+
+	select {
+	case stopErr := <-stopDone:
+		require.NoError(t, stopErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected Stop to return within 5 seconds")
+	}
+
+	select {
+	case <-proc.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected done channel to be signaled")
+	}
+}
+
 func helperCommand(t *testing.T, mode string) string {
 	t.Helper()
 	exe, err := os.Executable()
@@ -306,6 +331,24 @@ func TestCodexHelperProcess(t *testing.T) {
 				<-sigCh
 				close(stopWriter)
 				os.Exit(3)
+			case "flood-events":
+				sigCh := make(chan os.Signal, 1)
+				signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+				defer signal.Stop(sigCh)
+
+				go func() {
+					<-sigCh
+					os.Exit(0)
+				}()
+
+				for i := 0; i < 4096; i++ {
+					writeJSON(t, writer, map[string]interface{}{
+						"method": "helper/flood",
+						"params": map[string]interface{}{"index": i},
+					})
+				}
+
+				select {}
 			default:
 				os.Exit(9)
 			}
