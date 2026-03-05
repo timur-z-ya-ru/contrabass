@@ -202,3 +202,103 @@ Fix $ISSUE_ID in the codebase.
 		})
 	}
 }
+
+func TestParseWorkflow_FullSpecSections(t *testing.T) {
+	t.Parallel()
+
+	content := `---
+max_concurrency: 5
+poll_interval_ms: 17000
+model: openai/gpt-5.3-codex
+project_url: https://linear.app/example/project/legacy
+tracker:
+  type: jira
+  project_url: https://linear.app/example/project/nested
+  team_id: team-42
+  assignee_id: user-77
+polling:
+  interval_ms: 12000
+  backoff_strategy: linear
+workspace:
+  base_dir: /tmp/worktrees
+  branch_prefix: task/
+hooks:
+  before_run: ./scripts/before.sh
+  after_run: ./scripts/after.sh
+  before_remove: ./scripts/cleanup.sh
+codex:
+  binary_path: /usr/local/bin/codex
+  model: openai/gpt-5.3-codex-mini
+  approval_policy: manual
+  sandbox: none
+---
+Prompt body.
+`
+
+	path := filepath.Join(t.TempDir(), "WORKFLOW.md")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	cfg, err := ParseWorkflow(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "jira", cfg.TrackerType())
+	assert.Equal(t, "https://linear.app/example/project/nested", cfg.TrackerProjectURL())
+	assert.Equal(t, "team-42", cfg.TrackerTeamID())
+	assert.Equal(t, "user-77", cfg.TrackerAssigneeID())
+	assert.Equal(t, 12_000, cfg.PollingIntervalMs())
+	assert.Equal(t, "linear", cfg.PollingBackoffStrategy())
+	assert.Equal(t, "/tmp/worktrees", cfg.WorkspaceBaseDir())
+	assert.Equal(t, "task/", cfg.WorkspaceBranchPrefix())
+	assert.Equal(t, "./scripts/before.sh", cfg.HookBeforeRun())
+	assert.Equal(t, "./scripts/after.sh", cfg.HookAfterRun())
+	assert.Equal(t, "./scripts/cleanup.sh", cfg.HookBeforeRemove())
+	assert.Equal(t, "/usr/local/bin/codex", cfg.CodexBinaryPath())
+	assert.Equal(t, "openai/gpt-5.3-codex-mini", cfg.CodexModel())
+	assert.Equal(t, "manual", cfg.CodexApprovalPolicy())
+	assert.Equal(t, "none", cfg.CodexSandbox())
+
+	model, modelErr := cfg.Model()
+	require.NoError(t, modelErr)
+	assert.Equal(t, "openai/gpt-5.3-codex", model)
+
+	projectURL, projectURLErr := cfg.ProjectURL()
+	require.NoError(t, projectURLErr)
+	assert.Equal(t, "https://linear.app/example/project/legacy", projectURL)
+}
+
+func TestParseWorkflow_BackwardCompatibleMinimal(t *testing.T) {
+	t.Parallel()
+
+	content := `---
+model: openai/gpt-5-codex
+project_url: https://linear.app/example/project/minimal
+---
+Minimal prompt.
+`
+
+	path := filepath.Join(t.TempDir(), "WORKFLOW.md")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	cfg, err := ParseWorkflow(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	model, modelErr := cfg.Model()
+	require.NoError(t, modelErr)
+	assert.Equal(t, "openai/gpt-5-codex", model)
+
+	projectURL, projectURLErr := cfg.ProjectURL()
+	require.NoError(t, projectURLErr)
+	assert.Equal(t, "https://linear.app/example/project/minimal", projectURL)
+
+	assert.Equal(t, defaultTrackerType, cfg.TrackerType())
+	assert.Equal(t, defaultPollIntervalMs, cfg.PollingIntervalMs())
+	assert.Equal(t, defaultBackoffStrategy, cfg.PollingBackoffStrategy())
+	assert.Equal(t, defaultWorkspaceBaseDir, cfg.WorkspaceBaseDir())
+	assert.Equal(t, defaultBranchPrefix, cfg.WorkspaceBranchPrefix())
+	assert.Equal(t, defaultCodexBinaryPath, cfg.CodexBinaryPath())
+	assert.Equal(t, "openai/gpt-5-codex", cfg.CodexModel())
+	assert.Equal(t, defaultApprovalPolicy, cfg.CodexApprovalPolicy())
+	assert.Equal(t, defaultSandbox, cfg.CodexSandbox())
+}
