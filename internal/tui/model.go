@@ -103,6 +103,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
+		m.syncTables()
 		return m, cmd
 	case OrchestratorEventMsg:
 		m = m.applyOrchestratorEvent(msg.Event)
