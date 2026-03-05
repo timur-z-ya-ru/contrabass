@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 	"github.com/junhoyeo/symphony-charm/internal/orchestrator"
 	"github.com/junhoyeo/symphony-charm/internal/types"
@@ -16,6 +17,7 @@ type Model struct {
 	header  Header
 	table   Table
 	backoff Backoff
+	keys    KeyMap
 
 	width    int
 	height   int
@@ -35,6 +37,7 @@ func NewModel() Model {
 		header:         NewHeader(),
 		table:          NewTable(),
 		backoff:        NewBackoff(),
+		keys:           NewKeyMap(),
 		agents:         make(map[string]AgentRow),
 		agentStartTime: make(map[string]time.Time),
 		backoffs:       make(map[string]BackoffRow),
@@ -53,8 +56,8 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			m.quitting = true
 			return m, tea.Quit
 		}
