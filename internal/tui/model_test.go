@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/junhoyeo/symphony-charm/internal/orchestrator"
 	"github.com/junhoyeo/symphony-charm/internal/types"
@@ -52,6 +53,13 @@ func TestModelTickReturnsCmd(t *testing.T) {
 	updated, cmd := m.Update(tickMsg(time.Now()))
 	require.NotNil(t, cmd)
 	assert.IsType(t, tickMsg{}, cmd())
+	_ = updated
+}
+
+func TestSpinnerTickReturnsCmd(t *testing.T) {
+	m := NewModel()
+	updated, cmd := m.Update(spinner.TickMsg{})
+	require.NotNil(t, cmd)
 	_ = updated
 }
 

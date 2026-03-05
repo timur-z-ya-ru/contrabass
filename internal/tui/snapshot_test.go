@@ -16,9 +16,14 @@ import (
 var update = flag.Bool("update", false, "update golden files")
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+var spinnerRegex = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]`)
 
 func stripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
+}
+
+func normalizeSpinner(s string) string {
+	return spinnerRegex.ReplaceAllString(s, "●")
 }
 
 func goldenPath(name string) string {
@@ -52,7 +57,7 @@ func newSnapshotModel() Model {
 }
 
 func syncModel(m Model) Model {
-	m.table = m.table.Update(agentRowsSorted(m.agents))
+	m.table = m.table.Update(agentRowsSorted(m.agents), m.spinner.View())
 	m.backoff = m.backoff.Update(backoffRowsSorted(m.backoffs))
 	m.header = m.header.Update(m.stats)
 	content := m.table.View()
@@ -65,7 +70,7 @@ func syncModel(m Model) Model {
 
 func TestSnapshotIdle(t *testing.T) {
 	m := syncModel(newSnapshotModel())
-	rendered := stripANSI(m.View().Content)
+	rendered := normalizeSpinner(stripANSI(m.View().Content))
 	assertGolden(t, "idle", rendered)
 }
 
@@ -84,7 +89,7 @@ func TestSnapshotSingleAgent(t *testing.T) {
 		Phase:     types.StreamingTurn,
 	}
 	m = syncModel(m)
-	rendered := stripANSI(m.View().Content)
+	rendered := normalizeSpinner(stripANSI(m.View().Content))
 	assertGolden(t, "single_agent", rendered)
 }
 
@@ -135,7 +140,7 @@ func TestSnapshotMultipleAgents(t *testing.T) {
 		RefreshIn:     1,
 	}
 	m = syncModel(m)
-	rendered := stripANSI(m.View().Content)
+	rendered := normalizeSpinner(stripANSI(m.View().Content))
 	assertGolden(t, "multiple_agents", rendered)
 }
 
@@ -154,7 +159,7 @@ func TestSnapshotBackoffQueue(t *testing.T) {
 		Error:   "server overload (-32001)",
 	}
 	m = syncModel(m)
-	rendered := stripANSI(m.View().Content)
+	rendered := normalizeSpinner(stripANSI(m.View().Content))
 	assertGolden(t, "backoff_queue", rendered)
 }
 
@@ -199,6 +204,6 @@ func TestSnapshotMixed(t *testing.T) {
 		RefreshIn:     1,
 	}
 	m = syncModel(m)
-	rendered := stripANSI(m.View().Content)
+	rendered := normalizeSpinner(stripANSI(m.View().Content))
 	assertGolden(t, "mixed", rendered)
 }
