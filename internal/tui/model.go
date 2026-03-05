@@ -10,8 +10,11 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/junhoyeo/symphony-charm/internal/orchestrator"
-	"github.com/junhoyeo/symphony-charm/internal/types"
+	"context"
+	"fmt"
+	"github.com/charmbracelet/log"
+	"github.com/junhoyeo/contrabass/internal/orchestrator"
+	"github.com/junhoyeo/contrabass/internal/types"
 )
 
 const refreshInterval = time.Second
@@ -35,6 +38,7 @@ type Model struct {
 	backoffRetryAt map[string]time.Time
 	stats          HeaderData
 	startTime      time.Time
+	unknownEvents  int
 }
 
 func NewModel() Model {
@@ -110,8 +114,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m = m.refreshDerivedFields(time.Time(msg))
 		return m, doTick()
+	default:
+		m.unknownEvents++
+		log.Debug("unhandled tea.Msg type", "type", fmt.Sprintf("%T", msg))
 	}
-
 	return m, nil
 }
 
@@ -125,14 +131,25 @@ func (m Model) View() tea.View {
 	return tea.NewView(rendered)
 }
 
-func StartEventBridge(p *tea.Program, events <-chan orchestrator.OrchestratorEvent) {
+func StartEventBridge(ctx context.Context, p *tea.Program, events <-chan orchestrator.OrchestratorEvent) {
 	if p == nil || events == nil {
 		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	go func() {
-		for event := range events {
-			p.Send(OrchestratorEventMsg{Event: event})
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
+				p.Send(OrchestratorEventMsg{Event: event})
+			}
 		}
 	}()
 }
@@ -150,76 +167,111 @@ func (m Model) applyOrchestratorEvent(event orchestrator.OrchestratorEvent) Mode
 
 	switch event.Type {
 	case orchestrator.EventStatusUpdate:
-		update, ok := event.Data.(orchestrator.StatusUpdate)
-		if !ok {
-			break
+		switch update := event.Data.(type) {
+		case orchestrator.StatusUpdate:
+			if !update.Stats.StartTime.IsZero() {
+				m.startTime = update.Stats.StartTime
+			}
+			m.stats.RunningAgents = update.Stats.Running
+			m.stats.MaxAgents = update.Stats.MaxAgents
+			m.stats.TokensIn = update.Stats.TotalTokensIn
+			m.stats.TokensOut = update.Stats.TotalTokensOut
+			m.stats.TokensTotal = update.Stats.TotalTokensIn + update.Stats.TotalTokensOut
+			if update.ModelName != "" {
+				m.stats.ModelName = update.ModelName
+			}
+			if update.ProjectURL != "" {
+				m.stats.ProjectURL = update.ProjectURL
+			}
+			m = m.refreshDerivedFields(event.Timestamp)
+		default:
+			log.Warn("event payload type mismatch",
+				"expected", "StatusUpdate",
+				"event_type", event.Type.String(),
+				"issue_id", event.IssueID)
 		}
-		if !update.Stats.StartTime.IsZero() {
-			m.startTime = update.Stats.StartTime
-		}
-		m.stats.RunningAgents = update.Stats.Running
-		m.stats.MaxAgents = update.Stats.MaxAgents
-		m.stats.TokensIn = update.Stats.TotalTokensIn
-		m.stats.TokensOut = update.Stats.TotalTokensOut
-		m.stats.TokensTotal = update.Stats.TotalTokensIn + update.Stats.TotalTokensOut
-		m = m.refreshDerivedFields(event.Timestamp)
 	case orchestrator.EventAgentStarted:
-		started, ok := event.Data.(orchestrator.AgentStarted)
-		if !ok {
-			break
+		switch started := event.Data.(type) {
+		case orchestrator.AgentStarted:
+			delete(m.backoffs, event.IssueID)
+			delete(m.backoffRetryAt, event.IssueID)
+			m.agentStartTime[event.IssueID] = event.Timestamp
+			m.agents[event.IssueID] = AgentRow{
+				IssueID:   event.IssueID,
+				Stage:     types.InitializingSession.String(),
+				PID:       started.PID,
+				Age:       "0s",
+				Turn:      started.Attempt,
+				TokensIn:  0,
+				TokensOut: 0,
+				SessionID: started.SessionID,
+				LastEvent: event.Type.String(),
+				Phase:     types.InitializingSession,
+			}
+			m.syncTables()
+		default:
+			log.Warn("event payload type mismatch",
+				"expected", "AgentStarted",
+				"event_type", event.Type.String(),
+				"issue_id", event.IssueID)
 		}
-		delete(m.backoffs, event.IssueID)
-		delete(m.backoffRetryAt, event.IssueID)
-		m.agentStartTime[event.IssueID] = event.Timestamp
-		m.agents[event.IssueID] = AgentRow{
-			IssueID:   event.IssueID,
-			Stage:     types.InitializingSession.String(),
-			PID:       started.PID,
-			Age:       "0s",
-			Turn:      started.Attempt,
-			TokensIn:  0,
-			TokensOut: 0,
-			SessionID: started.SessionID,
-			LastEvent: event.Type.String(),
-			Phase:     types.InitializingSession,
-		}
-		m.syncTables()
 	case orchestrator.EventAgentFinished:
-		finished, ok := event.Data.(orchestrator.AgentFinished)
-		if !ok {
-			break
+		switch finished := event.Data.(type) {
+		case orchestrator.AgentFinished:
+			if row, exists := m.agents[event.IssueID]; exists {
+				row.TokensIn = finished.TokensIn
+				row.TokensOut = finished.TokensOut
+				row.Phase = finished.Phase
+				row.Stage = finished.Phase.String()
+				row.LastEvent = event.Type.String()
+				m.agents[event.IssueID] = row
+			}
+			delete(m.agents, event.IssueID)
+			delete(m.agentStartTime, event.IssueID)
+			m.syncTables()
+		default:
+			log.Warn("event payload type mismatch",
+				"expected", "AgentFinished",
+				"event_type", event.Type.String(),
+				"issue_id", event.IssueID)
 		}
-		if row, exists := m.agents[event.IssueID]; exists {
-			row.TokensIn = finished.TokensIn
-			row.TokensOut = finished.TokensOut
-			row.Phase = finished.Phase
-			row.Stage = finished.Phase.String()
-			row.LastEvent = event.Type.String()
-			m.agents[event.IssueID] = row
-		}
-		delete(m.agents, event.IssueID)
-		delete(m.agentStartTime, event.IssueID)
-		m.syncTables()
 	case orchestrator.EventBackoffEnqueued:
-		backoff, ok := event.Data.(orchestrator.BackoffEnqueued)
-		if !ok {
-			break
+		switch backoff := event.Data.(type) {
+		case orchestrator.BackoffEnqueued:
+			retryIn := durationString(backoff.RetryAt.Sub(event.Timestamp))
+			m.backoffs[event.IssueID] = BackoffRow{
+				IssueID: event.IssueID,
+				Attempt: backoff.Attempt,
+				RetryIn: retryIn,
+				Error:   backoff.Error,
+			}
+			m.backoffRetryAt[event.IssueID] = backoff.RetryAt
+			m.syncTables()
+		default:
+			log.Warn("event payload type mismatch",
+				"expected", "BackoffEnqueued",
+				"event_type", event.Type.String(),
+				"issue_id", event.IssueID)
 		}
-		retryIn := durationString(backoff.RetryAt.Sub(event.Timestamp))
-		m.backoffs[event.IssueID] = BackoffRow{
-			IssueID: event.IssueID,
-			Attempt: backoff.Attempt,
-			RetryIn: retryIn,
-			Error:   backoff.Error,
-		}
-		m.backoffRetryAt[event.IssueID] = backoff.RetryAt
-		m.syncTables()
 	case orchestrator.EventIssueReleased:
-		delete(m.agents, event.IssueID)
-		delete(m.agentStartTime, event.IssueID)
-		delete(m.backoffs, event.IssueID)
-		delete(m.backoffRetryAt, event.IssueID)
-		m.syncTables()
+		switch event.Data.(type) {
+		case orchestrator.IssueReleased:
+			delete(m.agents, event.IssueID)
+			delete(m.agentStartTime, event.IssueID)
+			delete(m.backoffs, event.IssueID)
+			delete(m.backoffRetryAt, event.IssueID)
+			m.syncTables()
+		default:
+			log.Warn("event payload type mismatch",
+				"expected", "IssueReleased",
+				"event_type", event.Type.String(),
+				"issue_id", event.IssueID)
+		}
+	default:
+		m.unknownEvents++
+		log.Warn("unknown orchestrator event type",
+			"type", event.Type,
+			"issue_id", event.IssueID)
 	}
 
 	return m

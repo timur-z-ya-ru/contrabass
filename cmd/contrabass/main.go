@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -13,13 +14,27 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
 
-	"github.com/junhoyeo/symphony-charm/internal/agent"
-	"github.com/junhoyeo/symphony-charm/internal/config"
-	"github.com/junhoyeo/symphony-charm/internal/logging"
-	"github.com/junhoyeo/symphony-charm/internal/orchestrator"
-	"github.com/junhoyeo/symphony-charm/internal/tracker"
-	"github.com/junhoyeo/symphony-charm/internal/tui"
-	"github.com/junhoyeo/symphony-charm/internal/workspace"
+	"github.com/junhoyeo/contrabass/internal/agent"
+	"github.com/junhoyeo/contrabass/internal/config"
+	"github.com/junhoyeo/contrabass/internal/logging"
+	"github.com/junhoyeo/contrabass/internal/orchestrator"
+	"github.com/junhoyeo/contrabass/internal/tracker"
+	"github.com/junhoyeo/contrabass/internal/tui"
+	"github.com/junhoyeo/contrabass/internal/workspace"
+)
+
+var (
+	runTUIOrchestrator = func(ctx context.Context, orch *orchestrator.Orchestrator) error {
+		return orch.Run(ctx)
+	}
+	runGracefulShutdown = orchestrator.GracefulShutdown
+	runTUIProgram       = func(p *tea.Program) (tea.Model, error) {
+		return p.Run()
+	}
+	startTUIEventBridge   = func(ctx context.Context, p *tea.Program, events <-chan orchestrator.OrchestratorEvent) {
+		tui.StartEventBridge(ctx, p, events)
+	}
+	runTUIShutdownTimeout = 6 * time.Second
 )
 
 func main() {
@@ -39,9 +54,9 @@ func newRootCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "symphony-charm",
+		Use:   "contrabass",
 		Short: "Orchestrate coding agents with a Charm TUI dashboard",
-		Long: `Symphony-Charm is a Go reimplementation of OpenAI's Symphony.
+		Long: `Contrabass is a Go reimplementation of OpenAI's Symphony.
 It orchestrates coding agents against an issue tracker and visualises
 progress in a terminal UI built with the Charm stack.`,
 		SilenceUsage: true,
@@ -52,7 +67,7 @@ progress in a terminal UI built with the Charm stack.`,
 
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to WORKFLOW.md file (required)")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "headless mode — skip TUI, log events to stdout")
-	cmd.Flags().StringVar(&logFile, "log-file", "symphony-charm.log", "log output path")
+	cmd.Flags().StringVar(&logFile, "log-file", "contrabass.log", "log output path")
 	cmd.Flags().StringVar(&logLevel, "log-level", "info", "log level (debug/info/warn/error)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "exit after first poll cycle")
 
@@ -87,7 +102,7 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 	logger := logging.NewLogger(logging.LogOptions{
 		Level:  parseLogLevel(logLevel),
 		Output: logFile,
-		Prefix: "symphony-charm",
+		Prefix: "contrabass",
 	})
 
 	// 3. Create config watcher (live reload via fsnotify)
@@ -97,9 +112,8 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 	}
 	defer watcher.Stop()
 
-	// 4. Signal-aware context — cancelled on SIGINT/SIGTERM or when run returns
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// 5. Start watching config file for changes
 	go func() {
@@ -130,6 +144,10 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 
 	// 9. Create orchestrator
 	orch := orchestrator.NewOrchestrator(linearClient, workspaceMgr, agentRunner, watcher, logger)
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signalChan)
+	startSignalShutdownHook(ctx, signalChan, cancel, orch, logger)
 
 	// 10. Select run mode
 	if dryRun {
@@ -142,8 +160,9 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 }
 
 // runDryRun starts the orchestrator and exits after the first emitted event.
+// If no event arrives within the timeout, it logs a warning and returns nil.
 func runDryRun(ctx context.Context, orch *orchestrator.Orchestrator) error {
-	dryCtx, cancel := context.WithCancel(ctx)
+	dryCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	go func() {
@@ -152,7 +171,12 @@ func runDryRun(ctx context.Context, orch *orchestrator.Orchestrator) error {
 		}
 	}()
 
-	return orch.Run(dryCtx)
+	err := orch.Run(dryCtx)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		log.Warn("dry-run timeout: no events received within 60s")
+		return nil
+	}
+	return err
 }
 
 // runHeadless runs the orchestrator without TUI, logging events to the logger.
@@ -169,6 +193,25 @@ func runHeadless(ctx context.Context, orch *orchestrator.Orchestrator, logger *l
 	return orch.Run(ctx)
 }
 
+func startSignalShutdownHook(
+	ctx context.Context,
+	signalChan <-chan os.Signal,
+	cancel context.CancelFunc,
+	orch *orchestrator.Orchestrator,
+	logger *log.Logger,
+) {
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-signalChan:
+			if shutdownErr := runGracefulShutdown(cancel, orch, orchestrator.DefaultShutdownConfig(), logger); shutdownErr != nil {
+				logger.Error("graceful shutdown failed", "err", shutdownErr)
+			}
+		}
+	}()
+}
+
 // runTUI starts the orchestrator and renders the Charm TUI.
 func runTUI(ctx context.Context, orch *orchestrator.Orchestrator) error {
 	tuiCtx, tuiCancel := context.WithCancel(ctx)
@@ -177,20 +220,36 @@ func runTUI(ctx context.Context, orch *orchestrator.Orchestrator) error {
 	model := tui.NewModel()
 	p := tea.NewProgram(withViewportProgramOptions(model))
 
-	tui.StartEventBridge(p, orch.Events())
+	startTUIEventBridge(tuiCtx, p, orch.Events())
 
 	orchDone := make(chan error, 1)
+	orchestratorRunner := runTUIOrchestrator
 	go func() {
-		orchDone <- orch.Run(tuiCtx)
+		defer func() {
+			if r := recover(); r != nil {
+				orchDone <- fmt.Errorf("orchestrator panic: %v", r)
+			}
+		}()
+		orchDone <- orchestratorRunner(tuiCtx, orch)
 	}()
 
-	_, tuiErr := p.Run()
+	_, tuiErr := runTUIProgram(p)
 
 	// TUI exited — cancel orchestrator context and wait for graceful shutdown
 	tuiCancel()
 	select {
-	case <-orchDone:
-	case <-time.After(6 * time.Second):
+	case orchErr := <-orchDone:
+		if orchErr != nil {
+			if tuiErr != nil {
+				return fmt.Errorf("orchestrator failed: %w (tui error: %v)", orchErr, tuiErr)
+			}
+			return orchErr
+		}
+	case <-time.After(runTUIShutdownTimeout):
+		if tuiErr != nil {
+			return fmt.Errorf("timed out waiting for orchestrator shutdown: %w", tuiErr)
+		}
+		return errors.New("timed out waiting for orchestrator shutdown")
 	}
 
 	return tuiErr

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/junhoyeo/symphony-charm/internal/types"
+	"github.com/junhoyeo/contrabass/internal/types"
 )
 
 // AgentRow holds display data for one row in the agent table.
@@ -44,7 +44,11 @@ func (t Table) View() string {
 	hdr := fmt.Sprintf("  %-12s %-18s %-7s %-7s %-14s %-16s %s",
 		"ID", "STAGE", "PID", "AGE", "TOKENS", "SESSION", "EVENT")
 	headerStyle := lipgloss.NewStyle().Bold(true).Faint(true)
-	sep := "  " + strings.Repeat("─", 90)
+	sepWidth := 90
+	if t.width > 4 {
+		sepWidth = t.width - 4
+	}
+	sep := "  " + strings.Repeat("─", sepWidth)
 
 	var b strings.Builder
 	b.WriteString(headerStyle.Render(hdr))
