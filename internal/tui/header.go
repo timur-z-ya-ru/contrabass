@@ -110,8 +110,8 @@ func renderHeaderLogo() string {
 		// Mosaic Half: 2px × 2px → 1 terminal char (1 col × 1 row).
 		// Terminal chars are ~2x taller than wide, so a 2:1 pixel W:H
 		// produces a visually square image.
-		// 80×40 px → 40 cols × 20 rows → visually square.
-		img = resizeImage(img, 80, 40)
+		// 120×60 px → 60 cols × 30 rows → visually square.
+		img = resizeImage(img, 120, 60)
 		img = compositeOnBackground(img)
 		m := mosaic.New().Symbol(mosaic.Half)
 		headerLogoArt = strings.TrimRight(m.Render(img), "\n")
@@ -119,7 +119,7 @@ func renderHeaderLogo() string {
 	return headerLogoArt
 }
 
-// resizeImage scales the image to exactly targetW x targetH pixels (stretching, no aspect ratio preservation).
+// resizeImage scales the image to exactly targetW x targetH pixels using bilinear interpolation.
 func resizeImage(src image.Image, targetW, targetH int) image.Image {
 	b := src.Bounds()
 	srcW, srcH := b.Dx(), b.Dy()
@@ -129,20 +129,60 @@ func resizeImage(src image.Image, targetW, targetH int) image.Image {
 	if targetH < 1 {
 		targetH = 1
 	}
-
-	// Simple nearest-neighbor resize to exact target dimensions
 	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
 	for y := 0; y < targetH; y++ {
 		for x := 0; x < targetW; x++ {
-			srcX := x * srcW / targetW
-			srcY := y * srcH / targetH
-			if srcX >= srcW {
-				srcX = srcW - 1
+			// Map destination pixel to source coordinates (float)
+			srcXf := (float64(x) + 0.5) * float64(srcW) / float64(targetW) - 0.5
+			srcYf := (float64(y) + 0.5) * float64(srcH) / float64(targetH) - 0.5
+
+			// Clamp to valid range
+			if srcXf < 0 {
+				srcXf = 0
 			}
-			if srcY >= srcH {
-				srcY = srcH - 1
+			if srcYf < 0 {
+				srcYf = 0
 			}
-			dst.Set(x, y, src.At(b.Min.X+srcX, b.Min.Y+srcY))
+			if srcXf > float64(srcW-1) {
+				srcXf = float64(srcW - 1)
+			}
+			if srcYf > float64(srcH-1) {
+				srcYf = float64(srcH - 1)
+			}
+
+			// Integer coords and fractional parts
+			x0 := int(srcXf)
+			y0 := int(srcYf)
+			x1 := x0 + 1
+			y1 := y0 + 1
+			if x1 >= srcW {
+				x1 = srcW - 1
+			}
+			if y1 >= srcH {
+				y1 = srcH - 1
+			}
+			dx := srcXf - float64(x0)
+			dy := srcYf - float64(y0)
+
+			// Sample 4 neighboring pixels
+			r00, g00, b00, a00 := src.At(b.Min.X+x0, b.Min.Y+y0).RGBA()
+			r10, g10, b10, a10 := src.At(b.Min.X+x1, b.Min.Y+y0).RGBA()
+			r01, g01, b01, a01 := src.At(b.Min.X+x0, b.Min.Y+y1).RGBA()
+			r11, g11, b11, a11 := src.At(b.Min.X+x1, b.Min.Y+y1).RGBA()
+
+			// Bilinear interpolation
+			lerp := func(v00, v10, v01, v11 uint32) uint8 {
+				top := float64(v00)*(1-dx) + float64(v10)*dx
+				bot := float64(v01)*(1-dx) + float64(v11)*dx
+				return uint8((top*(1-dy) + bot*dy) / 256)
+			}
+
+			dst.SetRGBA(x, y, color.RGBA{
+				R: lerp(r00, r10, r01, r11),
+				G: lerp(g00, g10, g01, g11),
+				B: lerp(b00, b10, b01, b11),
+				A: lerp(a00, a10, a01, a11),
+			})
 		}
 	}
 	return dst
