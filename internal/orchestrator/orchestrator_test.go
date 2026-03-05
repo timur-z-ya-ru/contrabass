@@ -917,3 +917,329 @@ func TestOrchestrator_ReconcileAssignsTimedOut(t *testing.T) {
 	assert.Equal(t, types.TimedOut, entry.attempt.Phase)
 	assert.Equal(t, "run timed out", entry.attempt.Error)
 }
+
+// --- Error Path Tests (T30) ---
+
+type failingWorkspace struct {
+	baseDir  string
+	createErr error
+}
+
+func (w *failingWorkspace) Create(_ context.Context, _ types.Issue) (string, error) {
+	return "", w.createErr
+}
+func (w *failingWorkspace) Cleanup(_ context.Context, _ string) error { return nil }
+func (w *failingWorkspace) CleanupAll(_ context.Context) error { return nil }
+
+func TestOrchestrator_WorkspaceCreateFailure(t *testing.T) {
+	issues := []types.Issue{{ID: "ISS-WS-FAIL", Title: "ws fail", State: types.Unclaimed}}
+	mt := newObservingTracker(issues)
+	ws := &failingWorkspace{createErr: errors.New("disk full")}
+	mr := &agent.MockRunner{}
+	cfg := &staticConfig{cfg: testConfig()}
+	orch := NewOrchestrator(mt, ws, mr, cfg, nil)
+	events := newEventCollector(orch.Events())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := startOrchestrator(ctx, orch)
+
+	// Workspace creation failure should release the claim and enqueue backoff
+	require.Eventually(t, func() bool {
+		return events.Has(EventIssueReleased) && events.Has(EventBackoffEnqueued)
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// The claim was obtained then released
+	assert.GreaterOrEqual(t, mt.ClaimCount("ISS-WS-FAIL"), 1)
+	assert.GreaterOrEqual(t, mt.ReleaseCount("ISS-WS-FAIL"), 1)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestOrchestrator_PromptRenderFailure(t *testing.T) {
+	issues := []types.Issue{{ID: "ISS-PROMPT-FAIL", Title: "prompt fail", State: types.Unclaimed}}
+	mt := newObservingTracker(issues)
+	mw := workspace.NewMockManager(t.TempDir())
+	mr := &agent.MockRunner{}
+	cfg := &staticConfig{cfg: testConfig()}
+	// Use an invalid liquid template that will cause RenderPrompt to fail
+	cfg.cfg.PromptTemplate = "{{ invalid_var_that_does_not_exist }}"
+	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	events := newEventCollector(orch.Events())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := startOrchestrator(ctx, orch)
+
+	// Prompt render failure should release claim, cleanup workspace, and enqueue backoff
+	require.Eventually(t, func() bool {
+		return events.Has(EventIssueReleased) && events.Has(EventBackoffEnqueued)
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// Workspace should have been cleaned up
+	assert.False(t, mw.Exists("ISS-PROMPT-FAIL"))
+	assert.GreaterOrEqual(t, mt.ReleaseCount("ISS-PROMPT-FAIL"), 1)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestOrchestrator_ClaimUpdateFailureRollback(t *testing.T) {
+	issues := []types.Issue{{ID: "ISS-CLAIM-ROLL", Title: "claim rollback", State: types.Unclaimed}}
+	mt := newObservingTracker(issues)
+
+	// Inject UpdateErr on the base tracker so UpdateIssueState fails during claim
+	mt.base.UpdateErr = errors.New("update state failed")
+
+	mw := workspace.NewMockManager(t.TempDir())
+	mr := &agent.MockRunner{}
+	cfg := &staticConfig{cfg: testConfig()}
+	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	events := newEventCollector(orch.Events())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := startOrchestrator(ctx, orch)
+
+	// ClaimIssue calls ClaimIssue (succeeds) then UpdateIssueState (fails),
+	// which triggers ReleaseIssue rollback inside claimIssue.
+	// Then dispatchIssue gets the error and enqueues continuation.
+	require.Eventually(t, func() bool {
+		return events.Has(EventBackoffEnqueued)
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// The claim was attempted
+	assert.GreaterOrEqual(t, mt.ClaimCount("ISS-CLAIM-ROLL"), 1)
+	// ReleaseIssue was called as part of rollback
+	assert.GreaterOrEqual(t, mt.ReleaseCount("ISS-CLAIM-ROLL"), 1)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestResolveFinalPhase_ContextCanceled(t *testing.T) {
+	tests := []struct {
+		name      string
+		phase     types.RunPhase
+		message   string
+		doneErr   error
+		wantPhase types.RunPhase
+		wantMsg   string
+	}{
+		{
+			name:      "active_phase_canceled",
+			phase:     types.StreamingTurn,
+			message:   "",
+			doneErr:   context.Canceled,
+			wantPhase: types.CanceledByReconciliation,
+			wantMsg:   "context canceled",
+		},
+		{
+			name:      "already_failed_phase_canceled",
+			phase:     types.Failed,
+			message:   "earlier failure",
+			doneErr:   context.Canceled,
+			wantPhase: types.Failed,
+			wantMsg:   "earlier failure",
+		},
+		{
+			name:      "active_phase_with_generic_error",
+			phase:     types.InitializingSession,
+			message:   "",
+			doneErr:   errors.New("process crashed"),
+			wantPhase: types.Failed,
+			wantMsg:   "process crashed",
+		},
+		{
+			name:      "canceled_preserves_existing_message",
+			phase:     types.StreamingTurn,
+			message:   "prior error",
+			doneErr:   context.Canceled,
+			wantPhase: types.CanceledByReconciliation,
+			wantMsg:   "prior error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			phase, msg := resolveFinalPhase(tt.phase, tt.message, tt.doneErr)
+			assert.Equal(t, tt.wantPhase, phase)
+			assert.Equal(t, tt.wantMsg, msg)
+		})
+	}
+}
+
+func TestParseUsageTokens_TotalTokensFallback(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     map[string]interface{}
+		wantIn   int64
+		wantOut  int64
+	}{
+		{
+			name:    "nil_data",
+			data:    nil,
+			wantIn:  0,
+			wantOut: 0,
+		},
+		{
+			name:    "no_usage_key",
+			data:    map[string]interface{}{"other": 42},
+			wantIn:  0,
+			wantOut: 0,
+		},
+		{
+			name: "prompt_and_completion_tokens",
+			data: map[string]interface{}{
+				"usage": map[string]interface{}{
+					"prompt_tokens":     float64(100),
+					"completion_tokens": float64(50),
+				},
+			},
+			wantIn:  100,
+			wantOut: 50,
+		},
+		{
+			name: "total_tokens_fallback_when_no_prompt_or_completion",
+			data: map[string]interface{}{
+				"usage": map[string]interface{}{
+					"total_tokens": float64(200),
+				},
+			},
+			wantIn:  0,
+			wantOut: 200,
+		},
+		{
+			name: "input_and_output_tokens",
+			data: map[string]interface{}{
+				"usage": map[string]interface{}{
+					"input_tokens":  int64(80),
+					"output_tokens": int64(40),
+				},
+			},
+			wantIn:  80,
+			wantOut: 40,
+		},
+		{
+			name: "usage_is_not_a_map",
+			data: map[string]interface{}{
+				"usage": "not-a-map",
+			},
+			wantIn:  0,
+			wantOut: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in, out := parseUsageTokens(tt.data)
+			assert.Equal(t, tt.wantIn, in)
+			assert.Equal(t, tt.wantOut, out)
+		})
+	}
+}
+
+func TestOrchestrator_EventBufferFull(t *testing.T) {
+	var buf bytes.Buffer
+	logger := log.NewWithOptions(&buf, log.Options{Level: log.InfoLevel})
+
+	mt := newObservingTracker(nil)
+	mw := workspace.NewMockManager(t.TempDir())
+	mr := &agent.MockRunner{}
+	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, logger)
+
+	// Fill the events channel completely
+	for i := 0; i < defaultEventBufferSize; i++ {
+		orch.events <- OrchestratorEvent{
+			Type: EventStatusUpdate,
+			Data: StatusUpdate{Stats: Stats{Running: i}},
+		}
+	}
+
+	// Emit multiple event types to test drop logging for each
+	droppedEvents := []OrchestratorEvent{
+		{Type: EventAgentStarted, IssueID: "ISS-BUF-1", Data: AgentStarted{Attempt: 1}},
+		{Type: EventAgentFinished, IssueID: "ISS-BUF-2", Data: AgentFinished{Attempt: 1, Phase: types.Failed}},
+		{Type: EventBackoffEnqueued, IssueID: "ISS-BUF-3", Data: BackoffEnqueued{Attempt: 2}},
+	}
+
+	for _, ev := range droppedEvents {
+		orch.emitEvent(ev)
+	}
+
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "event_dropped")
+	assert.Contains(t, logOutput, "ISS-BUF-1")
+	assert.Contains(t, logOutput, "ISS-BUF-2")
+	assert.Contains(t, logOutput, "ISS-BUF-3")
+}
+
+func TestOrchestrator_NilContext(t *testing.T) {
+	mt := newObservingTracker(nil)
+	mw := workspace.NewMockManager(t.TempDir())
+	mr := &agent.MockRunner{}
+	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
+	go func() { for range orch.Events() {} }()
+
+	//nolint:staticcheck // SA1012: intentionally passing nil context to test guard
+	err := orch.Run(nil)
+	require.Error(t, err)
+	assert.Equal(t, "context is nil", err.Error())
+}
+
+func TestOrchestrator_BackoffIssueNotInCache(t *testing.T) {
+	// Set up orchestrator with no issues in tracker (so issuesByID is empty)
+	mt := newObservingTracker(nil)
+	mw := workspace.NewMockManager(t.TempDir())
+	mr := &agent.MockRunner{}
+	cfg := &staticConfig{cfg: testConfig()}
+	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	events := newEventCollector(orch.Events())
+
+	// Seed backoff for an issue that won't appear in fetched issues or cache
+	orch.mu.Lock()
+	orch.backoff = []types.BackoffEntry{{
+		IssueID: "ISS-GHOST",
+		Attempt: 2,
+		RetryAt: time.Now().Add(-time.Second), // already ready
+	}}
+	orch.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := startOrchestrator(ctx, orch)
+
+	// Should enqueue continuation because issue details are unavailable
+	require.Eventually(t, func() bool {
+		return events.Has(EventBackoffEnqueued)
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// Should NOT have started any agent
+	assert.False(t, events.Has(EventAgentStarted))
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestEventTypeString_Unknown(t *testing.T) {
+	tests := []struct {
+		name string
+		et   EventType
+		want string
+	}{
+		{name: "StatusUpdate", et: EventStatusUpdate, want: "StatusUpdate"},
+		{name: "AgentStarted", et: EventAgentStarted, want: "AgentStarted"},
+		{name: "AgentFinished", et: EventAgentFinished, want: "AgentFinished"},
+		{name: "BackoffEnqueued", et: EventBackoffEnqueued, want: "BackoffEnqueued"},
+		{name: "IssueReleased", et: EventIssueReleased, want: "IssueReleased"},
+		{name: "Unknown_99", et: EventType(99), want: "Unknown"},
+		{name: "Unknown_neg1", et: EventType(-1), want: "Unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.et.String())
+		})
+	}
+}
