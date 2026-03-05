@@ -23,6 +23,7 @@ const (
 	initializeRequestID  = 1
 	threadStartRequestID = 2
 	turnStartRequestID   = 3
+	maxJSONLineSize      = 10 * 1024 * 1024 // 10MB
 )
 
 type CodexRunner struct {
@@ -260,43 +261,56 @@ func (r *CodexRunner) Stop(proc *AgentProcess) error {
 
 func (r *CodexRunner) streamEventsAndWait(process *codexProcess, reader *bufio.Reader, events chan types.AgentEvent) {
 	defer close(events)
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLineSize)
 
-	var readErr error
-	for {
-		line, err := reader.ReadBytes('\n')
-		if len(bytes.TrimSpace(line)) > 0 {
-			msg := map[string]interface{}{}
-			if err := json.Unmarshal(bytes.TrimSpace(line), &msg); err != nil {
-				r.logger.Warn("codex malformed JSON", "err", err)
-			} else {
-				method, _ := msg["method"].(string)
-				if method != "" {
-					data := map[string]interface{}{}
-					if params, ok := msg["params"].(map[string]interface{}); ok {
-						data = params
-					}
-
-					event := types.AgentEvent{
-						Type:      method,
-						Data:      data,
-						Timestamp: time.Now(),
-					}
-
-					select {
-					case events <- event:
-					default:
-					}
-				}
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		msg := map[string]interface{}{}
+		if err := json.Unmarshal(line, &msg); err != nil {
+			rawPreview := string(line)
+			if len(rawPreview) > 512 {
+				rawPreview = rawPreview[:512] + "...(truncated)"
 			}
+			r.logger.Warn("codex malformed JSON", "err", err)
+			event := types.AgentEvent{
+				Type: "protocol/error",
+				Data: map[string]interface{}{
+					"error": fmt.Sprintf("malformed JSON: %s", err.Error()),
+					"raw":   rawPreview,
+				},
+				Timestamp: time.Now(),
+			}
+			select {
+			case events <- event:
+			default:
+			}
+			continue
+		}
+		method, _ := msg["method"].(string)
+		if method == "" {
+			continue
+		}
+		data := map[string]interface{}{}
+		if params, ok := msg["params"].(map[string]interface{}); ok {
+			data = params
 		}
 
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				readErr = err
-			}
-			break
+		event := types.AgentEvent{
+			Type:      method,
+			Data:      data,
+			Timestamp: time.Now(),
+		}
+		select {
+		case events <- event:
+		default:
 		}
 	}
+
+	readErr := scanner.Err()
 	waitErr := process.cmd.Wait()
 	if waitErr != nil {
 		process.finish(r.withStderr(waitErr, process.stderr))
@@ -305,7 +319,6 @@ func (r *CodexRunner) streamEventsAndWait(process *codexProcess, reader *bufio.R
 	} else {
 		process.finish(nil)
 	}
-
 	r.mu.Lock()
 	delete(r.procs, process.cmd.Process.Pid)
 	r.mu.Unlock()
