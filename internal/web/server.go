@@ -98,6 +98,7 @@ func (s *Server) newMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/state", s.withCORS(s.handleGetState))
 	mux.HandleFunc("GET /api/v1/{identifier}", s.withCORS(s.handleGetIssue))
 	mux.HandleFunc("POST /api/v1/refresh", s.withCORS(s.handleRefresh))
+	mux.HandleFunc("GET /api/v1/events", s.withCORS(s.handleSSE))
 	mux.HandleFunc("/api/v1/", s.withCORS(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}))
