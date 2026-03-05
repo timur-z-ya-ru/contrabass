@@ -49,7 +49,7 @@ func TestServerRoutes(t *testing.T) {
 		},
 	}
 
-	s := &Server{snapshotProvider: provider}
+	s := &Server{snapshotProvider: provider, dashboardFS: nil}
 	h := s.newMux()
 
 	tests := []struct {
@@ -151,6 +151,7 @@ func TestStartReturnsErrorWhenPortAlreadyInUse(t *testing.T) {
 	server := &Server{
 		listenAddr:       listener.Addr().String(),
 		snapshotProvider: provider,
+		dashboardFS:      nil,
 	}
 
 	err = server.Start(context.Background())
@@ -167,6 +168,7 @@ func TestStartShutsDownOnContextCancel(t *testing.T) {
 	server := &Server{
 		listenAddr:       addr,
 		snapshotProvider: provider,
+		dashboardFS:      nil,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

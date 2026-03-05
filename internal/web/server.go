@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net"
 	"net/http"
 	"strings"
@@ -23,16 +24,18 @@ type Server struct {
 	httpServer       *http.Server
 	orch             *orchestrator.Orchestrator
 	hub              *hub.Hub
+	dashboardFS      fs.FS
 	listenAddr       string
 	snapshotProvider SnapshotProvider
 }
 
-func NewServer(addr string, orch *orchestrator.Orchestrator, hub *hub.Hub) *Server {
+func NewServer(addr string, orch *orchestrator.Orchestrator, hub *hub.Hub, dashboardFS fs.FS) *Server {
 	listenAddr := normalizeListenAddr(addr)
 
 	return &Server{
 		orch:             orch,
 		hub:              hub,
+		dashboardFS:      dashboardFS,
 		listenAddr:       listenAddr,
 		snapshotProvider: orch,
 	}
@@ -102,6 +105,9 @@ func (s *Server) newMux() *http.ServeMux {
 	mux.HandleFunc("/api/v1/", s.withCORS(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}))
+	if s.dashboardFS != nil {
+		mux.Handle("/", SPAHandler(s.dashboardFS))
+	}
 	return mux
 }
 

@@ -105,7 +105,7 @@ func TestHandleSSEUnsubscribesOnClientDisconnect(t *testing.T) {
 }
 
 func TestHandleSSEReturns500WhenFlusherUnsupported(t *testing.T) {
-	s := &Server{snapshotProvider: fakeSnapshotProvider{snapshot: orchestrator.StateSnapshot{}}, hub: hub.NewHub(make(chan orchestrator.OrchestratorEvent))}
+	s := &Server{snapshotProvider: fakeSnapshotProvider{snapshot: orchestrator.StateSnapshot{}}, hub: hub.NewHub(make(chan orchestrator.OrchestratorEvent)), dashboardFS: nil}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
 	w := &nonFlusherResponseWriter{header: make(http.Header)}
 
@@ -123,7 +123,7 @@ func newSSETestServer(t *testing.T, provider fakeSnapshotProvider) (*Server, cha
 	ctx, cancel := context.WithCancel(context.Background())
 	go h.Run(ctx)
 
-	s := &Server{snapshotProvider: provider, hub: h}
+	s := &Server{snapshotProvider: provider, hub: h, dashboardFS: nil}
 
 	cleanup := func() {
 		cancel()
