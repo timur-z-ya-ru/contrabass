@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	_ "image/png"
 	"net/url"
 	"os"
@@ -57,10 +59,11 @@ func (h Header) View() string {
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("45"))
 	urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 
-	line1 := titleStyle.Render("CONTRABASS STATUS")
+	var logoBlock string
 	if logo := renderHeaderLogo(); logo != "" {
-		line1 = lipgloss.JoinHorizontal(lipgloss.Top, logo, "  ", line1)
+		logoBlock = logo + "\n"
 	}
+	line1 := titleStyle.Render("CONTRABASS STATUS")
 	line2 := strings.Join([]string{
 		labelStyle.Render("Agents: ") + valueStyle.Render(fmt.Sprintf("%d/%d", h.data.RunningAgents, h.data.MaxAgents)),
 		labelStyle.Render("Throughput: ") + valueStyle.Render(formatThroughput(h.data.ThroughputTPS, h.data.TokensTotal)),
@@ -74,7 +77,7 @@ func (h Header) View() string {
 	line5 := labelStyle.Render("URL: ") + urlStyle.Render(fullURL)
 	line6 := labelStyle.Render(fmt.Sprintf("Refresh in %ds", h.data.RefreshIn))
 
-	content := strings.Join([]string{line1, line2, line3, line4, line5, line6}, "\n")
+	content := strings.Join([]string{logoBlock + line1, line2, line3, line4, line5, line6}, "\n")
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -88,22 +91,109 @@ func (h Header) View() string {
 }
 
 func renderHeaderLogo() string {
+	if os.Getenv("TMUX") != "" {
+		return ""
+	}
 	headerLogoOnce.Do(func() {
 		f, err := os.Open(".github/assets/contrabass.png")
 		if err != nil {
 			return
 		}
 		defer f.Close() //nolint:errcheck
-
 		img, _, err := image.Decode(f)
 		if err != nil {
 			return
 		}
-
-		m := mosaic.New().Width(18).Height(6).Symbol(mosaic.Half)
+		// Crop to content bounds (remove transparent padding)
+		img = cropToContent(img)
+		// Manually resize to 2:1 pixel ratio for visually square output.
+		// Mosaic Half: 2px × 2px → 1 terminal char (1 col × 1 row).
+		// Terminal chars are ~2x taller than wide, so a 2:1 pixel W:H
+		// produces a visually square image.
+		// 80×40 px → 40 cols × 20 rows → visually square.
+		img = resizeImage(img, 80, 40)
+		img = compositeOnBackground(img)
+		m := mosaic.New().Symbol(mosaic.Half)
 		headerLogoArt = strings.TrimRight(m.Render(img), "\n")
 	})
 	return headerLogoArt
+}
+
+// resizeImage scales the image to exactly targetW x targetH pixels (stretching, no aspect ratio preservation).
+func resizeImage(src image.Image, targetW, targetH int) image.Image {
+	b := src.Bounds()
+	srcW, srcH := b.Dx(), b.Dy()
+	if targetW < 1 {
+		targetW = 1
+	}
+	if targetH < 1 {
+		targetH = 1
+	}
+
+	// Simple nearest-neighbor resize to exact target dimensions
+	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+	for y := 0; y < targetH; y++ {
+		for x := 0; x < targetW; x++ {
+			srcX := x * srcW / targetW
+			srcY := y * srcH / targetH
+			if srcX >= srcW {
+				srcX = srcW - 1
+			}
+			if srcY >= srcH {
+				srcY = srcH - 1
+			}
+			dst.Set(x, y, src.At(b.Min.X+srcX, b.Min.Y+srcY))
+		}
+	}
+	return dst
+}
+// cropToContent finds the bounding box of non-transparent pixels and crops to it.
+func cropToContent(src image.Image) image.Image {
+	b := src.Bounds()
+	minX, minY := b.Max.X, b.Max.Y
+	maxX, maxY := b.Min.X, b.Min.Y
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			_, _, _, a := src.At(x, y).RGBA()
+			// Use threshold to ignore anti-aliasing/nearly-transparent pixels
+			if a > 0x8000 { // >50% opaque
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	// No content found, return original
+	if minX > maxX || minY > maxY {
+		return src
+	}
+	// Crop to content bounds
+	cropRect := image.Rect(minX, minY, maxX+1, maxY+1)
+	cropped := image.NewRGBA(image.Rect(0, 0, cropRect.Dx(), cropRect.Dy()))
+	draw.Draw(cropped, cropped.Bounds(), src, cropRect.Min, draw.Src)
+	return cropped
+}
+// compositeOnBackground blends the image onto a dark background,
+// handling transparency properly for terminal rendering.
+func compositeOnBackground(src image.Image) image.Image {
+	b := src.Bounds()
+	// Use a dark background that works well with most terminal themes
+	bg := color.RGBA{R: 30, G: 30, B: 40, A: 255}
+	out := image.NewRGBA(b)
+	// Fill with background color first
+	draw.Draw(out, out.Bounds(), &image.Uniform{C: bg}, image.Point{}, draw.Src)
+	// Composite source image over background (respects alpha)
+	draw.Draw(out, out.Bounds(), src, b.Min, draw.Over)
+	return out
 }
 
 func formatRuntime(seconds int) string {
