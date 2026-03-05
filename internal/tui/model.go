@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -20,6 +21,7 @@ type Model struct {
 	backoff  Backoff
 	viewport viewport.Model
 	keys     KeyMap
+	spinner  spinner.Model
 
 	width    int
 	height   int
@@ -37,12 +39,17 @@ func NewModel() Model {
 	now := time.Now()
 	vp := viewport.New()
 	vp.MouseWheelEnabled = true
+	s := spinner.New(
+		spinner.WithSpinner(spinner.Dot),
+		spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("42"))),
+	)
 	return Model{
 		header:         NewHeader(),
 		table:          NewTable(),
 		backoff:        NewBackoff(),
 		viewport:       vp,
 		keys:           NewKeyMap(),
+		spinner:        s,
 		agents:         make(map[string]AgentRow),
 		agentStartTime: make(map[string]time.Time),
 		backoffs:       make(map[string]BackoffRow),
@@ -55,7 +62,7 @@ func NewModel() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return doTick()
+	return tea.Batch(doTick(), m.spinner.Tick)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -78,6 +85,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		headerH := lipgloss.Height(m.header.View())
 		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(msg.Height - headerH - 1)
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	case OrchestratorEventMsg:
 		m = m.applyOrchestratorEvent(msg.Event)
 	case tickMsg:
@@ -234,7 +245,7 @@ func (m Model) refreshDerivedFields(now time.Time) Model {
 }
 
 func (m *Model) syncTables() {
-	m.table = m.table.Update(agentRowsSorted(m.agents))
+	m.table = m.table.Update(agentRowsSorted(m.agents), m.spinner.View())
 	m.backoff = m.backoff.Update(backoffRowsSorted(m.backoffs))
 	content := m.table.View()
 	if bv := m.backoff.View(); bv != "" {
