@@ -249,3 +249,45 @@ func TestLocalTrackerFindDispatchableIssue(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, otherTeam.ID, selected.ID)
 }
+
+func TestLocalTrackerFindDispatchableIssueSkipsChildrenOfClaimedParent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	localTracker := NewLocalTracker(LocalConfig{
+		BoardDir:    filepath.Join(t.TempDir(), "board"),
+		IssuePrefix: "CB",
+		Actor:       "bot",
+	})
+
+	_, err := localTracker.InitBoard(ctx)
+	require.NoError(t, err)
+
+	parent, err := localTracker.CreateIssue(ctx, "Epic", "Parent issue", nil)
+	require.NoError(t, err)
+	child, err := localTracker.CreateIssueWithOptions(ctx, LocalIssueCreateOptions{
+		Title:    "Child issue",
+		ParentID: parent.ID,
+		Assignee: "team-alpha",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, localTracker.ClaimIssue(ctx, parent.ID))
+
+	_, found, err := localTracker.FindDispatchableIssue(ctx, "team-alpha")
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	require.NoError(t, localTracker.ReleaseIssue(ctx, parent.ID))
+	_, found, err = localTracker.FindDispatchableIssue(ctx, "team-alpha")
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	_, err = localTracker.MoveIssue(ctx, parent.ID, LocalBoardStateDone)
+	require.NoError(t, err)
+
+	selected, found, err := localTracker.FindDispatchableIssue(ctx, "team-alpha")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, child.ID, selected.ID)
+}

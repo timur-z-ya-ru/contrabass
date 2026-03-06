@@ -474,6 +474,15 @@ func (t *LocalTracker) FindDispatchableIssue(ctx context.Context, teamName strin
 		if issue.ClaimedBy != "" {
 			continue
 		}
+		if issue.ParentID != "" {
+			parent, err := t.GetIssue(ctx, issue.ParentID)
+			if err != nil {
+				return LocalBoardIssue{}, false, err
+			}
+			if parent.State != LocalBoardStateDone {
+				continue
+			}
+		}
 		if issue.State != LocalBoardStateTodo && issue.State != LocalBoardStateRetry {
 			continue
 		}
