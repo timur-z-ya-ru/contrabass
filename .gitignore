@@ -3,7 +3,7 @@
 
 # Built binaries
 symphony-charm
-/contrabass
+contrabass
 
 # JavaScript workspace dependencies
 node_modules/
@@ -36,6 +36,7 @@ Thumbs.db
 .sisyphus/
 .omc/
 
-# Contrabass Output
-contrabass
+# Runtime artifacts
 contrabass.log
+contrabass_test.log
+workspaces/

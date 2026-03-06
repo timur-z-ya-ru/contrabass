@@ -362,10 +362,12 @@ func (o *Orchestrator) dispatchIssue(
 		IssueID:   issue.ID,
 		Timestamp: eventTimestamp,
 		Data: AgentStarted{
-			Attempt:   runAttempt.Attempt,
-			PID:       process.PID,
-			SessionID: process.SessionID,
-			Workspace: workspacePath,
+			IssueIdentifier: issue.Identifier,
+			IssueURL:        issue.URL,
+			Attempt:         runAttempt.Attempt,
+			PID:             process.PID,
+			SessionID:       process.SessionID,
+			Workspace:       workspacePath,
 		},
 	})
 

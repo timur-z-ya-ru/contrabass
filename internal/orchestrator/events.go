@@ -55,10 +55,12 @@ type StatusUpdate struct {
 func (StatusUpdate) eventPayload() {}
 
 type AgentStarted struct {
-	Attempt   int
-	PID       int
-	SessionID string
-	Workspace string
+	IssueIdentifier string
+	IssueURL        string
+	Attempt         int
+	PID             int
+	SessionID       string
+	Workspace       string
 }
 
 func (AgentStarted) eventPayload() {}

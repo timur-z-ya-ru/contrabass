@@ -96,7 +96,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Seed Linear with parallel demo tickets for Contrabass"
     )
-    parser.add_argument("--team-key", default="ODO", help="Linear team key")
+    parser.add_argument("--team-key", default="SYM", help="Linear team key")
     parser.add_argument(
         "--project-name",
         default="Contrabass Symphony Demo",

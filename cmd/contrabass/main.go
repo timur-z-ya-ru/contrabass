@@ -130,11 +130,24 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 	}()
 
 	// 6. Create tracker (Linear client)
+	assigneeID := trackerAssigneeID(cfg)
 	linearClient := tracker.NewLinearClient(tracker.LinearConfig{
 		APIKey:      os.Getenv("LINEAR_API_KEY"),
 		ProjectSlug: projectSlug(cfg),
-		AssigneeID:  cfg.TrackerAssigneeID(),
+		AssigneeID:  assigneeID,
 	})
+	if assigneeID == "" {
+		logger.Info("no assignee configured, resolving from API token...")
+		viewerID, viewerErr := linearClient.FetchViewerID(ctx)
+		if viewerErr != nil {
+			logger.Warn("could not auto-resolve assignee from API token", "err", viewerErr)
+			logger.Warn("set tracker.assignee_id or LINEAR_ASSIGNEE to claim issues")
+		} else {
+			assigneeID = viewerID
+			linearClient.SetAssigneeID(viewerID)
+			logger.Info("auto-resolved assignee from API token", "id", viewerID)
+		}
+	}
 
 	// 7. Create workspace manager (uses cwd as repo root)
 	repoPath, err := os.Getwd()
@@ -281,6 +294,9 @@ func runTUI(ctx context.Context, orch *orchestrator.Orchestrator, h *hub.Hub) er
 	}()
 
 	_, tuiErr := runTUIProgram(p)
+	// Clean up native Kitty image AFTER alt-screen exit so the delete
+	// command targets the main screen where the image persists.
+	tui.CleanupNativeImage()
 
 	// TUI exited — cancel orchestrator context and wait for graceful shutdown
 	tuiCancel()
@@ -341,4 +357,12 @@ func projectSlug(cfg *config.WorkflowConfig) string {
 		return parts[len(parts)-1]
 	}
 	return ""
+}
+
+// trackerAssigneeID extracts assignee from config with env fallback.
+func trackerAssigneeID(cfg *config.WorkflowConfig) string {
+	if cfgAssignee := cfg.TrackerAssigneeID(); cfgAssignee != "" {
+		return cfgAssignee
+	}
+	return os.Getenv("LINEAR_ASSIGNEE")
 }

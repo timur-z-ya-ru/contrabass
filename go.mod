@@ -3,10 +3,12 @@ module github.com/junhoyeo/contrabass
 go 1.25.0
 
 require (
-	charm.land/bubbletea/v2 v2.0.1
 	charm.land/bubbles/v2 v2.0.0
+	charm.land/bubbletea/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.0
+	github.com/BourgeoisBear/rasterm v1.1.2
 	github.com/charmbracelet/log v0.4.2
+	github.com/charmbracelet/x/mosaic v0.0.0-20260304213900-0e78e2954235
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/osteele/liquid v1.8.1
 	github.com/spf13/cobra v1.10.1
@@ -42,8 +44,10 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
+	golang.org/x/image v0.36.0 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/term v0.18.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

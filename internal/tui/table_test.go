@@ -113,3 +113,28 @@ func TestTableSetWidth(t *testing.T) {
 	out := tbl.View()
 	assert.Contains(t, out, "X-1")
 }
+
+func TestDisplayIssueID(t *testing.T) {
+	tests := []struct {
+		name string
+		id   string
+		want string
+	}{
+		{"issue key", "ODO-123", "ODO-123"},
+		{"uuid", "4c28b1c1-4584-448d-8f9e-a928254f7f1d", "4c28b1c1..."},
+		{"long", "abcdefghijklmnopqrstuvwxyz", "abcdefghi..."},
+		{"empty", "", "-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, displayIssueID(tt.id))
+		})
+	}
+}
+
+func TestCompactStageAndEvent(t *testing.T) {
+	assert.Equal(t, "Init", compactStage(types.InitializingSession.String()))
+	assert.Equal(t, "Turn", compactStage(types.StreamingTurn.String()))
+	assert.Equal(t, "session init", compactEvent("AgentStarted"))
+	assert.Equal(t, "tokens updated", compactEvent("codex/event/token_count"))
+}
