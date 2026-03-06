@@ -130,7 +130,16 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 		AssigneeID:  assigneeID,
 	})
 	if assigneeID == "" {
-		logger.Warn("linear assignee is not configured; set tracker.assignee_id or LINEAR_ASSIGNEE")
+		logger.Info("no assignee configured, resolving from API token...")
+		viewerID, viewerErr := linearClient.FetchViewerID(ctx)
+		if viewerErr != nil {
+			logger.Warn("could not auto-resolve assignee from API token", "err", viewerErr)
+			logger.Warn("set tracker.assignee_id or LINEAR_ASSIGNEE to claim issues")
+		} else {
+			assigneeID = viewerID
+			linearClient.SetAssigneeID(viewerID)
+			logger.Info("auto-resolved assignee from API token", "id", viewerID)
+		}
 	}
 
 	// 7. Create workspace manager (uses cwd as repo root)
