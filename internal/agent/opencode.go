@@ -340,6 +340,11 @@ func (r *OpenCodeRunner) startServer(
 	}
 }
 
+func isSignalError(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr)
+}
+
 func (r *OpenCodeRunner) stopServer(server *openCodeServer) error {
 	if server == nil {
 		return nil
@@ -361,7 +366,7 @@ func (r *OpenCodeRunner) stopServer(server *openCodeServer) error {
 
 	select {
 	case err := <-waitCh:
-		if err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err != nil && !errors.Is(err, os.ErrProcessDone) && !isSignalError(err) {
 			return err
 		}
 		return nil
