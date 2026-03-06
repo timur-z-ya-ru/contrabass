@@ -1,5 +1,6 @@
 {
   "name": "contrabass-workspace",
+  "description": "A project-level orchestrator for AI coding agents",
   "private": true,
   "packageManager": "bun@1.3.4",
   "workspaces": [

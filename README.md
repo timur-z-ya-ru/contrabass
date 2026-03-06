@@ -7,6 +7,8 @@
 > **A project-level orchestrator for AI coding agents** <br />
 > Go + Charm stack reimplementation of OpenAI's Symphony ([openai/symphony](https://github.com/openai/symphony)) — manage work, not agents
 
+![Contrabass Demo (TUI in Action)](./.github/assets/demo.png)
+
 </div>
 
 Contrabass is a terminal-first orchestrator for issue-driven agent runs, with an optional local web dashboard for live visibility.
