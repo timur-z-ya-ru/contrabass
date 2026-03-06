@@ -183,7 +183,7 @@ Examples:
   - Starts or reuses an `opencode serve` process
   - Creates sessions over HTTP and streams events over SSE
 
-## Web dashboard and HTTP API
+## Web dashboard and HTTP API (WIP)
 
 When `--port` is set, Contrabass serves the embedded dashboard and a small JSON/SSE API.
 
@@ -200,30 +200,6 @@ The dashboard currently renders:
 - aggregate runtime/token metrics
 - running session table
 - retry queue
-
-## Repository layout
-
-```text
-contrabass/
-├── cmd/contrabass/          # Cobra entrypoint
-├── internal/
-│   ├── agent/              # Codex and OpenCode runners
-│   ├── config/             # WORKFLOW.md parsing, templating, watcher
-│   ├── hub/                # Event fan-out for web subscribers
-│   ├── logging/            # Charm log helpers
-│   ├── orchestrator/       # Poll/claim/run/retry/shutdown logic
-│   ├── tracker/            # Linear and GitHub tracker adapters
-│   ├── tui/                # Bubble Tea + Lip Gloss terminal UI
-│   ├── types/              # Shared issue/run/event types
-│   ├── web/                # HTTP API, SSE, SPA serving
-│   └── workspace/          # Git worktree lifecycle
-├── packages/
-│   ├── dashboard/          # React + Vite operations dashboard
-│   └── landing/            # Astro site that renders this README
-├── docs/                   # Protocol notes and test planning docs
-├── testdata/               # Workflow fixtures and golden snapshots
-└── tests/e2e/              # End-to-end smoke coverage
-```
 
 ## Development
 
@@ -270,11 +246,15 @@ go run ./cmd/contrabass --config testdata/workflow.demo.md --port 8080
 
 ## Charm stack
 
-Contrabass uses the Charm v2 stack with vanity import paths:
+Direct dependencies from the [Charm](https://charm.sh) v2 ecosystem:
 
-- `charm.land/bubbletea/v2`
-- `charm.land/bubbles/v2`
-- `charm.land/lipgloss/v2`
+| Logo | Library | Import Path | Purpose |
+|------|---------|-------------|---------|
+| &nbsp;&nbsp; <img height="64px" src=".github/assets/charm/charm-bubbletea.webp" alt="Bubble Tea" /> | [**Bubble Tea**](https://github.com/charmbracelet/bubbletea) | `charm.land/bubbletea/v2` | TUI framework (Elm architecture) |
+| <img height="64px" src=".github/assets/charm/charm-lipgloss.webp" alt="Lip Gloss" /> | [**Lip Gloss**](https://github.com/charmbracelet/lipgloss) | `charm.land/lipgloss/v2` | Styling & layout |
+| <img height="64px" src=".github/assets/charm/charm-bubbles.webp" alt="Bubbles" /> | [**Bubbles**](https://github.com/charmbracelet/bubbles) | `charm.land/bubbles/v2` | Reusable TUI components |
+| <img height="64px" src=".github/assets/charm/charm-log.webp" alt="Log" /> | [**Log**](https://github.com/charmbracelet/log) | `github.com/charmbracelet/log` | Structured logging |
+| <img height="64px" src="https://user-images.githubusercontent.com/25087/236529273-6f8c841f-f11b-4ec8-b01d-7e3d9b17c85f.png" alt="X" /> | [**x**](https://github.com/charmbracelet/x) | `github.com/charmbracelet/x` | |
 
 Plus:
 
