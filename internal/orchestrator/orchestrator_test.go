@@ -226,6 +226,40 @@ func (c *eventCollector) FinishedPhase(issueID string) (types.RunPhase, bool) {
 	return types.RunPhase(0), false
 }
 
+func (c *eventCollector) Event(eventType EventType, issueID string) (OrchestratorEvent, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, event := range c.events {
+		if event.Type == eventType && event.IssueID == issueID {
+			return event, true
+		}
+	}
+
+	return OrchestratorEvent{}, false
+}
+
+func assertIssueReleasedTimestampPrecedesBackoff(t *testing.T, events *eventCollector, issueID string) {
+	t.Helper()
+
+	released, ok := events.Event(EventIssueReleased, issueID)
+	require.True(t, ok, "expected IssueReleased event for %s", issueID)
+	require.False(t, released.Timestamp.IsZero(), "expected IssueReleased timestamp for %s", issueID)
+
+	backoff, ok := events.Event(EventBackoffEnqueued, issueID)
+	require.True(t, ok, "expected BackoffEnqueued event for %s", issueID)
+	require.False(t, backoff.Timestamp.IsZero(), "expected BackoffEnqueued timestamp for %s", issueID)
+
+	assert.False(
+		t,
+		released.Timestamp.After(backoff.Timestamp),
+		"expected IssueReleased timestamp %s to be <= BackoffEnqueued timestamp %s for %s",
+		released.Timestamp.Format(time.RFC3339Nano),
+		backoff.Timestamp.Format(time.RFC3339Nano),
+		issueID,
+	)
+}
+
 type trackingRunner struct {
 	base *agent.MockRunner
 
@@ -998,7 +1032,8 @@ func (w *failingWorkspace) Cleanup(_ context.Context, _ string) error { return n
 func (w *failingWorkspace) CleanupAll(_ context.Context) error        { return nil }
 
 func TestOrchestrator_WorkspaceCreateFailure(t *testing.T) {
-	issues := []types.Issue{{ID: "ISS-WS-FAIL", Title: "ws fail", State: types.Unclaimed}}
+	issueID := "ISS-WS-FAIL"
+	issues := []types.Issue{{ID: issueID, Title: "ws fail", State: types.Unclaimed}}
 	mt := newObservingTracker(issues)
 	ws := &failingWorkspace{createErr: errors.New("disk full")}
 	mr := &agent.MockRunner{}
@@ -1014,17 +1049,19 @@ func TestOrchestrator_WorkspaceCreateFailure(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return events.Has(EventIssueReleased) && events.Has(EventBackoffEnqueued)
 	}, 2*time.Second, 10*time.Millisecond)
+	assertIssueReleasedTimestampPrecedesBackoff(t, events, issueID)
 
 	// The claim was obtained then released
-	assert.GreaterOrEqual(t, mt.ClaimCount("ISS-WS-FAIL"), 1)
-	assert.GreaterOrEqual(t, mt.ReleaseCount("ISS-WS-FAIL"), 1)
+	assert.GreaterOrEqual(t, mt.ClaimCount(issueID), 1)
+	assert.GreaterOrEqual(t, mt.ReleaseCount(issueID), 1)
 
 	cancel()
 	require.NoError(t, <-done)
 }
 
 func TestOrchestrator_PromptRenderFailure(t *testing.T) {
-	issues := []types.Issue{{ID: "ISS-PROMPT-FAIL", Title: "prompt fail", State: types.Unclaimed}}
+	issueID := "ISS-PROMPT-FAIL"
+	issues := []types.Issue{{ID: issueID, Title: "prompt fail", State: types.Unclaimed}}
 	mt := newObservingTracker(issues)
 	mw := workspace.NewMockManager(t.TempDir())
 	mr := &agent.MockRunner{}
@@ -1042,10 +1079,11 @@ func TestOrchestrator_PromptRenderFailure(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return events.Has(EventIssueReleased) && events.Has(EventBackoffEnqueued)
 	}, 2*time.Second, 10*time.Millisecond)
+	assertIssueReleasedTimestampPrecedesBackoff(t, events, issueID)
 
 	// Workspace should have been cleaned up
-	assert.False(t, mw.Exists("ISS-PROMPT-FAIL"))
-	assert.GreaterOrEqual(t, mt.ReleaseCount("ISS-PROMPT-FAIL"), 1)
+	assert.False(t, mw.Exists(issueID))
+	assert.GreaterOrEqual(t, mt.ReleaseCount(issueID), 1)
 
 	cancel()
 	require.NoError(t, <-done)
