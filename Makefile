@@ -1,11 +1,15 @@
 # Contrabass — Build Tooling
 # Build order: dashboard SPA must build before Go binary (embed.FS requires dist/)
 
-.PHONY: build-dashboard build dev-dashboard dev test test-dashboard test-all clean lint
+.PHONY: build-dashboard build-landing build dev-dashboard dev-landing dev test test-dashboard test-landing test-all clean lint
 
 # Build the React dashboard SPA to packages/dashboard/dist/
 build-dashboard:
 	cd packages/dashboard && bun run build
+
+# Build the Astro landing site to packages/landing/dist/
+build-landing:
+	cd packages/landing && bun run build
 
 # Build the Go binary with embedded dashboard
 build: build-dashboard
@@ -14,6 +18,10 @@ build: build-dashboard
 # Start Vite dev server for dashboard development (with hot reload)
 dev-dashboard:
 	cd packages/dashboard && bun run dev
+
+# Start Astro dev server for landing page development
+dev-landing:
+	cd packages/landing && bun run dev
 
 # Run Go binary in dev mode
 dev:
@@ -27,8 +35,12 @@ test:
 test-dashboard:
 	cd packages/dashboard && bun test
 
-# Run all tests (Go + React)
-test-all: test test-dashboard
+# Run Astro landing checks
+test-landing:
+	cd packages/landing && bun run check
+
+# Run all tests/checks
+test-all: test test-dashboard test-landing
 
 # Remove build artifacts
 clean:
