@@ -36,10 +36,11 @@ type CodexRunner struct {
 }
 
 type codexProcess struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	done   chan error
-	stderr *safeBuffer
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	done       chan error
+	stderr     *safeBuffer
+	stderrDone chan struct{}
 
 	doneOnce sync.Once
 }
@@ -110,15 +111,18 @@ func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace st
 	}
 
 	stderrBuf := &safeBuffer{}
+	stderrDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(stderrBuf, stderrPipe)
+		close(stderrDone)
 	}()
 
 	process := &codexProcess{
-		cmd:    cmd,
-		stdin:  stdin,
-		done:   make(chan error, 1),
-		stderr: stderrBuf,
+		cmd:        cmd,
+		stdin:      stdin,
+		done:       make(chan error, 1),
+		stderr:     stderrBuf,
+		stderrDone: stderrDone,
 	}
 
 	r.mu.Lock()
@@ -316,6 +320,7 @@ func (r *CodexRunner) streamEventsAndWait(process *codexProcess, reader *bufio.R
 
 	readErr := scanner.Err()
 	waitErr := process.cmd.Wait()
+	<-process.stderrDone
 	if waitErr != nil {
 		process.finish(r.withStderr(waitErr, process.stderr))
 	} else if readErr != nil {
