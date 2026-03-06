@@ -5,7 +5,7 @@
 
 # Build the React dashboard SPA to packages/dashboard/dist/
 build-dashboard:
-	cd packages/dashboard && bun run build
+	cd packages/dashboard && bun run build && touch dist/.gitkeep
 
 # Build the Astro landing site to packages/landing/dist/
 build-landing:
@@ -55,6 +55,8 @@ ci:
 # Remove build artifacts
 clean:
 	rm -rf packages/dashboard/dist packages/landing/dist contrabass
+	mkdir -p packages/dashboard/dist
+	touch packages/dashboard/dist/.gitkeep
 
 # Run Go linter
 lint:
