@@ -28,6 +28,11 @@ func TestOpenCodeRunner_CompileTimeCheck(t *testing.T) {
 	assert.Equal(t, time.Duration(0), runner.streamClient.Timeout)
 }
 
+func TestOpenCodeRunner_Close(t *testing.T) {
+	runner := NewOpenCodeRunner("opencode serve", 0, "", "", time.Second)
+	require.NoError(t, runner.Close())
+}
+
 func TestOpenCodeRunner_Start(t *testing.T) {
 	startStream := make(chan struct{})
 

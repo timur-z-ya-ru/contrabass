@@ -191,6 +191,8 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool) erro
 		return fmt.Errorf("unknown agent type: %q (supported: codex, opencode)", cfg.AgentType())
 	}
 
+	defer agentRunner.Close()
+
 	// 9. Create orchestrator
 	orch := orchestrator.NewOrchestrator(trackerClient, workspaceMgr, agentRunner, watcher, logger)
 	signalChan := make(chan os.Signal, 1)

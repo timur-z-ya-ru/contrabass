@@ -259,6 +259,12 @@ func (r *OpenCodeRunner) stopServer() error {
 	}
 }
 
+// Close shuts down the managed OpenCode server process. It should be called
+// during application shutdown to prevent the subprocess from being orphaned.
+func (r *OpenCodeRunner) Close() error {
+	return r.stopServer()
+}
+
 func (r *OpenCodeRunner) Start(ctx context.Context, _ types.Issue, _ string, prompt string) (*AgentProcess, error) {
 	if err := r.ensureServer(ctx); err != nil {
 		return nil, err
