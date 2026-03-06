@@ -342,7 +342,12 @@ func (r *OpenCodeRunner) startServer(
 
 func isSignalError(err error) bool {
 	var exitErr *exec.ExitError
-	return errors.As(err, &exitErr)
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	// Go returns ExitCode() == -1 for signal-terminated processes.
+	// Only treat those as signal errors, not real crashes with non-zero exit codes.
+	return exitErr.ExitCode() == -1
 }
 
 func (r *OpenCodeRunner) stopServer(server *openCodeServer) error {
