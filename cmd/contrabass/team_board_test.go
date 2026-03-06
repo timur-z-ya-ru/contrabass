@@ -23,6 +23,21 @@ func TestDefaultTeamNameForIssue(t *testing.T) {
 	assert.Equal(t, "issue-issue", defaultTeamNameForIssue("   "))
 }
 
+func TestResolveTeamNameForIssue(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "team-alpha", resolveTeamNameForIssue(tracker.LocalBoardIssue{
+		ID:       "CB-1",
+		Assignee: "Team Alpha",
+	}, ""))
+	assert.Equal(t, "ops", resolveTeamNameForIssue(tracker.LocalBoardIssue{
+		ID: "CB-2",
+	}, "Ops"))
+	assert.Equal(t, "issue-cb-3", resolveTeamNameForIssue(tracker.LocalBoardIssue{
+		ID: "CB-3",
+	}, ""))
+}
+
 func TestBuildTeamTasksFromBoardIssue(t *testing.T) {
 	t.Parallel()
 
@@ -31,8 +46,10 @@ func TestBuildTeamTasksFromBoardIssue(t *testing.T) {
 		Title:       "Ship autonomous board sync",
 		Description: "Add automatic board status updates from team lifecycle events.",
 		State:       tracker.LocalBoardStateTodo,
+		Assignee:    "team-alpha",
 		Labels:      []string{"tracker", "team"},
 		URL:         "local://CB-12",
+		BlockedBy:   []string{"CB-9"},
 	}
 
 	tasks := buildTeamTasksFromBoardIssue(issue)
@@ -46,6 +63,8 @@ func TestBuildTeamTasksFromBoardIssue(t *testing.T) {
 	assert.Equal(t, []string{"002-cb-12-prd"}, tasks[2].DependsOn)
 	assert.Contains(t, tasks[2].Description, "Issue ID: CB-12")
 	assert.Contains(t, tasks[2].Description, "Add automatic board status updates")
+	assert.Contains(t, tasks[2].Description, "Assigned to: team-alpha")
+	assert.Contains(t, tasks[2].Description, "Blocked by: CB-9")
 }
 
 func TestBoardIssueSyncerLifecycle(t *testing.T) {

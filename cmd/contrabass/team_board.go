@@ -47,12 +47,26 @@ func consumeTeamEvents(
 }
 
 func defaultTeamNameForIssue(issueID string) string {
-	normalized := teamNamePattern.ReplaceAllString(strings.ToLower(strings.TrimSpace(issueID)), "-")
-	normalized = strings.Trim(normalized, "-")
+	normalized := sanitizeTeamName(issueID)
 	if normalized == "" {
 		normalized = "issue"
 	}
 	return "issue-" + normalized
+}
+
+func sanitizeTeamName(raw string) string {
+	normalized := teamNamePattern.ReplaceAllString(strings.ToLower(strings.TrimSpace(raw)), "-")
+	return strings.Trim(normalized, "-")
+}
+
+func resolveTeamNameForIssue(issue tracker.LocalBoardIssue, override string) string {
+	if normalized := sanitizeTeamName(override); normalized != "" {
+		return normalized
+	}
+	if normalized := sanitizeTeamName(issue.Assignee); normalized != "" {
+		return normalized
+	}
+	return defaultTeamNameForIssue(issue.ID)
 }
 
 func buildTeamTasksFromBoardIssue(issue tracker.LocalBoardIssue) []types.TeamTask {
@@ -94,6 +108,18 @@ func formatBoardIssueContext(issue tracker.LocalBoardIssue) string {
 		b.WriteString(fmt.Sprintf("Labels: %s\n", strings.Join(issue.Labels, ", ")))
 	}
 	b.WriteString(fmt.Sprintf("Current board state: %s\n", issue.State))
+	if issue.Assignee != "" {
+		b.WriteString(fmt.Sprintf("Assigned to: %s\n", issue.Assignee))
+	}
+	if issue.ParentID != "" {
+		b.WriteString(fmt.Sprintf("Parent issue: %s\n", issue.ParentID))
+	}
+	if len(issue.ChildIDs) > 0 {
+		b.WriteString(fmt.Sprintf("Child issues: %s\n", strings.Join(issue.ChildIDs, ", ")))
+	}
+	if len(issue.BlockedBy) > 0 {
+		b.WriteString(fmt.Sprintf("Blocked by: %s\n", strings.Join(issue.BlockedBy, ", ")))
+	}
 	if issue.ClaimedBy != "" {
 		b.WriteString(fmt.Sprintf("Claimed by: %s\n", issue.ClaimedBy))
 	}
@@ -134,6 +160,9 @@ func (s *boardIssueSyncer) Start(ctx context.Context) error {
 	if _, err := s.tracker.UpdateIssue(ctx, s.issueID, func(issue *tracker.LocalBoardIssue) error {
 		if issue.TrackerMeta == nil {
 			issue.TrackerMeta = map[string]interface{}{}
+		}
+		if strings.TrimSpace(issue.Assignee) == "" {
+			issue.Assignee = s.teamName
 		}
 		issue.ClaimedBy = "team:" + s.teamName
 		issue.TrackerMeta["team_name"] = s.teamName

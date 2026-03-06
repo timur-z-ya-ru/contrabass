@@ -149,3 +149,103 @@ func TestLocalTrackerUpdateIssue(t *testing.T) {
 	assert.Equal(t, "issue-ops-1", reloaded.TrackerMeta["team_name"])
 	assert.Equal(t, "team-exec", reloaded.TrackerMeta["team_phase"])
 }
+
+func TestLocalTrackerCreateChildIssueAndAssign(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	localTracker := NewLocalTracker(LocalConfig{
+		BoardDir:    filepath.Join(t.TempDir(), "board"),
+		IssuePrefix: "CB",
+		Actor:       "bot",
+	})
+
+	_, err := localTracker.InitBoard(ctx)
+	require.NoError(t, err)
+
+	parent, err := localTracker.CreateIssue(ctx, "Parent issue", "Top-level work item", []string{"epic"})
+	require.NoError(t, err)
+
+	child, err := localTracker.CreateIssueWithOptions(ctx, LocalIssueCreateOptions{
+		Title:       "Child issue",
+		Description: "Implement the first slice",
+		ParentID:    parent.ID,
+		Assignee:    "team-alpha",
+		Labels:      []string{"slice"},
+		BlockedBy:   []string{"CB-999"},
+		TrackerMeta: map[string]interface{}{"kind": "implementation"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, parent.ID, child.ParentID)
+	assert.Equal(t, "team-alpha", child.Assignee)
+	assert.Equal(t, []string{"CB-999"}, child.BlockedBy)
+	assert.Equal(t, "implementation", child.TrackerMeta["kind"])
+
+	parent, err = localTracker.GetIssue(ctx, parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{child.ID}, parent.ChildIDs)
+
+	children, err := localTracker.ListChildIssues(ctx, parent.ID)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, child.ID, children[0].ID)
+
+	assigned, err := localTracker.AssignIssue(ctx, child.ID, "team-beta")
+	require.NoError(t, err)
+	assert.Equal(t, "team-beta", assigned.Assignee)
+}
+
+func TestLocalTrackerFindDispatchableIssue(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	localTracker := NewLocalTracker(LocalConfig{
+		BoardDir:    filepath.Join(t.TempDir(), "board"),
+		IssuePrefix: "CB",
+		Actor:       "bot",
+	})
+
+	_, err := localTracker.InitBoard(ctx)
+	require.NoError(t, err)
+
+	blocker, err := localTracker.CreateIssue(ctx, "Blocker", "Must finish first", nil)
+	require.NoError(t, err)
+	blockedIssue, err := localTracker.CreateIssueWithOptions(ctx, LocalIssueCreateOptions{
+		Title:     "Blocked issue",
+		ParentID:  blocker.ID,
+		BlockedBy: []string{blocker.ID},
+	})
+	require.NoError(t, err)
+
+	ready, err := localTracker.CreateIssueWithOptions(ctx, LocalIssueCreateOptions{
+		Title:    "Ready issue",
+		Assignee: "team-alpha",
+	})
+	require.NoError(t, err)
+
+	otherTeam, err := localTracker.CreateIssueWithOptions(ctx, LocalIssueCreateOptions{
+		Title:    "Other team issue",
+		Assignee: "team-beta",
+	})
+	require.NoError(t, err)
+
+	selected, found, err := localTracker.FindDispatchableIssue(ctx, "team-alpha")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, blocker.ID, selected.ID)
+
+	require.NoError(t, localTracker.UpdateIssueState(ctx, blocker.ID, types.Released))
+	selected, found, err = localTracker.FindDispatchableIssue(ctx, "")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, blockedIssue.ID, selected.ID)
+
+	require.NoError(t, localTracker.ClaimIssue(ctx, blockedIssue.ID))
+	_, err = localTracker.AssignIssue(ctx, ready.ID, "team-gamma")
+	require.NoError(t, err)
+	selected, found, err = localTracker.FindDispatchableIssue(ctx, "team-beta")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, otherTeam.ID, selected.ID)
+}

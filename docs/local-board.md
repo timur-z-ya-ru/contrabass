@@ -40,10 +40,13 @@ The internal board is intentionally separate from team runtime state under
 ```bash
 contrabass board init --prefix CB
 contrabass board create --title "Fix retry loop" --labels bug,orchestrator
+contrabass board create --title "Ship team bridge" --parent CB-1 --assignee team-alpha --blocked-by CB-2
 contrabass board list
+contrabass board assign CB-1 team-alpha
 contrabass board move CB-1 in_progress
 contrabass board comment CB-1 --body "agent run started"
 contrabass board show CB-1
+contrabass board dispatch --config WORKFLOW.md --team-name team-alpha
 contrabass team run --config WORKFLOW.md --issue CB-1
 ```
 
@@ -82,3 +85,21 @@ Current bridge behavior:
 This is the first slice of the autonomous board/team loop where AI agents can
 create board issues, assign them to a team run, and let the runtime move the
 ticket state automatically.
+
+## Dispatch loop
+
+`contrabass board dispatch --config WORKFLOW.md` closes the next gap in the
+autonomous loop by selecting the oldest runnable internal issue and forwarding
+it into the existing `team run --issue` path.
+
+Dispatch rules:
+
+- only `todo` and `retry` issues are eligible
+- claimed issues are skipped
+- blockers listed in `blocked_by` must already be `done`
+- `--team-name` limits selection to matching or unassigned issues
+- if an issue already has an `assignee`, that becomes the default team name
+
+This lets the harness create and assign tickets on the internal board, then let
+Contrabass automatically pick the next ready ticket and execute it with the
+team runtime.

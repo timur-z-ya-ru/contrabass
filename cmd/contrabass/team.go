@@ -45,6 +45,14 @@ var teamCancelCmd = &cobra.Command{
 	RunE:  cancelTeam,
 }
 
+type teamRunOptions struct {
+	ConfigPath string
+	TeamName   string
+	TasksPath  string
+	IssueID    string
+	MaxWorkers int
+}
+
 func init() {
 	// teamRunCmd flags
 	teamRunCmd.Flags().StringP("config", "c", "", "path to WORKFLOW.md file (required)")
@@ -151,23 +159,29 @@ func runTeam(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting max-workers flag: %w", err)
 	}
 
+	return runTeamWithOptions(teamRunOptions{
+		ConfigPath: cfgPath,
+		TeamName:   teamName,
+		TasksPath:  tasksPath,
+		IssueID:    issueID,
+		MaxWorkers: maxWorkers,
+	})
+}
+
+func runTeamWithOptions(opts teamRunOptions) error {
 	switch {
-	case tasksPath != "" && issueID != "":
+	case opts.TasksPath != "" && opts.IssueID != "":
 		return errors.New("provide either --tasks or --issue, not both")
-	case tasksPath == "" && issueID == "":
+	case opts.TasksPath == "" && opts.IssueID == "":
 		return errors.New("either --tasks or --issue is required")
-	case teamName == "" && issueID == "":
+	case opts.TeamName == "" && opts.IssueID == "":
 		return errors.New("team name is required when running from --tasks")
 	}
 
 	// 1. Parse config
-	cfg, err := config.ParseWorkflow(cfgPath)
+	cfg, err := config.ParseWorkflow(opts.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("parsing workflow config: %w", err)
-	}
-
-	if teamName == "" {
-		teamName = defaultTeamNameForIssue(issueID)
 	}
 
 	// 2. Create workspace manager
@@ -186,7 +200,8 @@ func runTeam(cmd *cobra.Command, args []string) error {
 
 	var tasks []types.TeamTask
 	var boardSyncer *boardIssueSyncer
-	if issueID != "" {
+	teamName := opts.TeamName
+	if opts.IssueID != "" {
 		if cfg.TrackerType() != "internal" && cfg.TrackerType() != "local" {
 			return fmt.Errorf("team run --issue requires tracker.type internal/local, got %q", cfg.TrackerType())
 		}
@@ -194,19 +209,26 @@ func runTeam(cmd *cobra.Command, args []string) error {
 		localTracker := tracker.NewLocalTracker(tracker.LocalConfig{
 			BoardDir:    cfg.LocalBoardDir(),
 			IssuePrefix: cfg.LocalIssuePrefix(),
-			Actor:       "team:" + teamName,
 		})
 
-		issue, err := localTracker.GetIssue(context.Background(), issueID)
+		issue, err := localTracker.GetIssue(context.Background(), opts.IssueID)
 		if err != nil {
-			return fmt.Errorf("loading internal board issue %q: %w", issueID, err)
+			return fmt.Errorf("loading internal board issue %q: %w", opts.IssueID, err)
 		}
 
+		if teamName == "" {
+			teamName = resolveTeamNameForIssue(issue, "")
+		}
+		localTracker = tracker.NewLocalTracker(tracker.LocalConfig{
+			BoardDir:    cfg.LocalBoardDir(),
+			IssuePrefix: cfg.LocalIssuePrefix(),
+			Actor:       "team:" + teamName,
+		})
 		tasks = buildTeamTasksFromBoardIssue(issue)
-		boardSyncer = newBoardIssueSyncer(localTracker, issueID, teamName)
+		boardSyncer = newBoardIssueSyncer(localTracker, opts.IssueID, teamName)
 	} else {
 		// 4. Read tasks JSON file
-		tasksData, err := os.ReadFile(tasksPath)
+		tasksData, err := os.ReadFile(opts.TasksPath)
 		if err != nil {
 			return fmt.Errorf("reading tasks file: %w", err)
 		}
@@ -231,15 +253,15 @@ func runTeam(cmd *cobra.Command, args []string) error {
 		ClaimLeaseSeconds: cfg.TeamClaimLeaseSeconds(),
 		StateDir:          cfg.TeamStateDir(),
 		AgentType:         cfg.AgentType(),
-		BoardIssueID:      issueID,
+		BoardIssueID:      opts.IssueID,
 	}
 
 	// Override max workers if provided — update both teamCfg and the parsed
 	// config so that Coordinator.runExecPhase (which reads c.cfg.TeamMaxWorkers())
 	// sees the CLI override.
-	if maxWorkers > 0 {
-		teamCfg.MaxWorkers = maxWorkers
-		cfg.Team.MaxWorkers = maxWorkers
+	if opts.MaxWorkers > 0 {
+		teamCfg.MaxWorkers = opts.MaxWorkers
+		cfg.Team.MaxWorkers = opts.MaxWorkers
 	}
 
 	// 8. Initialize team

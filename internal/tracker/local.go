@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,6 +28,7 @@ const (
 )
 
 var localBoardPrefixPattern = regexp.MustCompile(`[^A-Za-z0-9]+`)
+var localBoardTeamPattern = regexp.MustCompile(`[^a-z0-9]+`)
 
 type LocalConfig struct {
 	BoardDir    string
@@ -57,6 +59,9 @@ type LocalBoardIssue struct {
 	Title       string                 `json:"title"`
 	Description string                 `json:"description"`
 	State       LocalBoardState        `json:"state"`
+	ParentID    string                 `json:"parent_id,omitempty"`
+	ChildIDs    []string               `json:"child_ids,omitempty"`
+	Assignee    string                 `json:"assignee,omitempty"`
 	Labels      []string               `json:"labels,omitempty"`
 	URL         string                 `json:"url,omitempty"`
 	BranchName  string                 `json:"branch_name,omitempty"`
@@ -71,6 +76,16 @@ type LocalBoardComment struct {
 	Author    string    `json:"author,omitempty"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type LocalIssueCreateOptions struct {
+	Title       string
+	Description string
+	ParentID    string
+	Assignee    string
+	Labels      []string
+	BlockedBy   []string
+	TrackerMeta map[string]interface{}
 }
 
 type LocalTracker struct {
@@ -269,6 +284,14 @@ func (t *LocalTracker) AddComment(ctx context.Context, issueID string, body stri
 }
 
 func (t *LocalTracker) CreateIssue(ctx context.Context, title, description string, labels []string) (LocalBoardIssue, error) {
+	return t.CreateIssueWithOptions(ctx, LocalIssueCreateOptions{
+		Title:       title,
+		Description: description,
+		Labels:      labels,
+	})
+}
+
+func (t *LocalTracker) CreateIssueWithOptions(ctx context.Context, opts LocalIssueCreateOptions) (LocalBoardIssue, error) {
 	if err := checkLocalTrackerContext(ctx); err != nil {
 		return LocalBoardIssue{}, err
 	}
@@ -279,6 +302,15 @@ func (t *LocalTracker) CreateIssue(ctx context.Context, title, description strin
 	manifest, err := t.ensureBoardLocked()
 	if err != nil {
 		return LocalBoardIssue{}, err
+	}
+
+	var parent LocalBoardIssue
+	if strings.TrimSpace(opts.ParentID) != "" {
+		parent, err = t.loadIssueLocked(strings.TrimSpace(opts.ParentID))
+		if err != nil {
+			return LocalBoardIssue{}, err
+		}
+		opts.ParentID = parent.ID
 	}
 
 	issueID := fmt.Sprintf("%s-%d", manifest.IssuePrefix, manifest.NextIssueNumber)
@@ -292,11 +324,15 @@ func (t *LocalTracker) CreateIssue(ctx context.Context, title, description strin
 	issue := LocalBoardIssue{
 		ID:          issueID,
 		Identifier:  issueID,
-		Title:       title,
-		Description: description,
+		Title:       opts.Title,
+		Description: opts.Description,
 		State:       LocalBoardStateTodo,
-		Labels:      slices.Clone(labels),
+		ParentID:    opts.ParentID,
+		Assignee:    opts.Assignee,
+		Labels:      slices.Clone(opts.Labels),
 		URL:         fmt.Sprintf("local://%s", issueID),
+		BlockedBy:   slices.Clone(opts.BlockedBy),
+		TrackerMeta: maps.Clone(opts.TrackerMeta),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -305,7 +341,32 @@ func (t *LocalTracker) CreateIssue(ctx context.Context, title, description strin
 		return LocalBoardIssue{}, err
 	}
 
+	if issue.ParentID != "" {
+		if !slices.Contains(parent.ChildIDs, issue.ID) {
+			parent.ChildIDs = append(parent.ChildIDs, issue.ID)
+			parent.UpdatedAt = now
+			if err := writeJSONAtomic(t.issuePath(parent.ID), parent); err != nil {
+				return LocalBoardIssue{}, err
+			}
+		}
+	}
+
 	return issue, nil
+}
+
+func (t *LocalTracker) CreateChildIssue(
+	ctx context.Context,
+	parentID string,
+	title string,
+	description string,
+	labels []string,
+) (LocalBoardIssue, error) {
+	return t.CreateIssueWithOptions(ctx, LocalIssueCreateOptions{
+		Title:       title,
+		Description: description,
+		ParentID:    parentID,
+		Labels:      labels,
+	})
 }
 
 func (t *LocalTracker) ListIssues(ctx context.Context, includeDone bool) ([]LocalBoardIssue, error) {
@@ -364,6 +425,81 @@ func (t *LocalTracker) GetIssue(ctx context.Context, issueID string) (LocalBoard
 	}
 
 	return t.loadIssueLocked(issueID)
+}
+
+func (t *LocalTracker) AssignIssue(ctx context.Context, issueID string, assignee string) (LocalBoardIssue, error) {
+	return t.UpdateIssue(ctx, issueID, func(issue *LocalBoardIssue) error {
+		issue.Assignee = strings.TrimSpace(assignee)
+		return nil
+	})
+}
+
+func (t *LocalTracker) ListChildIssues(ctx context.Context, parentID string) ([]LocalBoardIssue, error) {
+	if err := checkLocalTrackerContext(ctx); err != nil {
+		return nil, err
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if _, err := t.ensureBoardLocked(); err != nil {
+		return nil, err
+	}
+
+	parent, err := t.loadIssueLocked(parentID)
+	if err != nil {
+		return nil, err
+	}
+
+	children := make([]LocalBoardIssue, 0, len(parent.ChildIDs))
+	for _, childID := range parent.ChildIDs {
+		child, err := t.loadIssueLocked(childID)
+		if err != nil {
+			return nil, err
+		}
+		children = append(children, child)
+	}
+
+	return children, nil
+}
+
+func (t *LocalTracker) FindDispatchableIssue(ctx context.Context, teamName string) (LocalBoardIssue, bool, error) {
+	issues, err := t.ListIssues(ctx, false)
+	if err != nil {
+		return LocalBoardIssue{}, false, err
+	}
+
+	normalizedTeam := strings.TrimSpace(teamName)
+	for _, issue := range issues {
+		if issue.ClaimedBy != "" {
+			continue
+		}
+		if issue.State != LocalBoardStateTodo && issue.State != LocalBoardStateRetry {
+			continue
+		}
+		if normalizedTeam != "" && !issueMatchesTeam(issue, normalizedTeam) {
+			continue
+		}
+
+		blocked := false
+		for _, blockerID := range issue.BlockedBy {
+			blocker, err := t.GetIssue(ctx, blockerID)
+			if err != nil {
+				return LocalBoardIssue{}, false, err
+			}
+			if blocker.State != LocalBoardStateDone {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+
+		return issue, true, nil
+	}
+
+	return LocalBoardIssue{}, false, nil
 }
 
 // UpdateIssue applies a mutation to a board issue atomically and persists the result.
@@ -560,8 +696,12 @@ func (t *LocalTracker) commentsPath(issueID string) string {
 
 func (i LocalBoardIssue) toIssue() types.Issue {
 	trackerMeta := map[string]interface{}{
-		"source":     "local",
-		"claimed_by": i.ClaimedBy,
+		"source":      "local",
+		"claimed_by":  i.ClaimedBy,
+		"assignee":    i.Assignee,
+		"parent_id":   i.ParentID,
+		"child_ids":   slices.Clone(i.ChildIDs),
+		"board_state": i.State,
 	}
 	if i.TrackerMeta != nil {
 		for key, value := range i.TrackerMeta {
@@ -610,6 +750,19 @@ func sanitizeLocalIssuePrefix(prefix string) string {
 	}
 
 	return sanitized
+}
+
+func issueMatchesTeam(issue LocalBoardIssue, teamName string) bool {
+	assignee := strings.TrimSpace(issue.Assignee)
+	if assignee == "" {
+		return true
+	}
+	return assignee == teamName || normalizeLocalTeamName(assignee) == normalizeLocalTeamName(teamName)
+}
+
+func normalizeLocalTeamName(raw string) string {
+	normalized := localBoardTeamPattern.ReplaceAllString(strings.ToLower(strings.TrimSpace(raw)), "-")
+	return strings.Trim(normalized, "-")
 }
 
 func checkLocalTrackerContext(ctx context.Context) error {
