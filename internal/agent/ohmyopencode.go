@@ -86,9 +86,26 @@ func NewOhMyOpenCodeRunner(cfg *config.WorkflowConfig, timeout time.Duration) (*
 
 	binaryPath := cfg.OpenCodeBinaryPath()
 	inner := NewOpenCodeRunner(binaryPath, cfg.OpenCodePort(), cfg.OpenCodePassword(), cfg.OpenCodeUsername(), timeout)
+	inner.SetExtraEnv(runner.buildEnv())
 	runner.inner = inner
 
 	return runner, nil
+}
+
+func (r *OhMyOpenCodeRunner) buildEnv() []string {
+	env := []string{
+		"OPENCODE_CONFIG=" + filepath.Join(r.confDir, "opencode.json"),
+		"OPENCODE_CONFIG_DIR=" + r.confDir,
+		"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+	}
+
+	nodePath := r.confDir + "/node_modules"
+	if existing := os.Getenv("NODE_PATH"); existing != "" {
+		nodePath = nodePath + string(os.PathListSeparator) + existing
+	}
+	env = append(env, "NODE_PATH="+nodePath)
+
+	return env
 }
 
 func (r *OhMyOpenCodeRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string) (*AgentProcess, error) {
@@ -110,6 +127,10 @@ func (r *OhMyOpenCodeRunner) Close() error {
 
 func (r *OhMyOpenCodeRunner) ConfigDir() string {
 	return r.confDir
+}
+
+func (r *OhMyOpenCodeRunner) ExtraEnv() []string {
+	return r.inner.extraEnv
 }
 
 func (r *OhMyOpenCodeRunner) writeConfigs() error {

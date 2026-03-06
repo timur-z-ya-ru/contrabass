@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,4 +160,49 @@ func TestOhMyOpenCodeRunner_NoProviderOmitted(t *testing.T) {
 
 	_, hasProvider := ocDoc["provider"]
 	assert.False(t, hasProvider)
+}
+
+func TestOhMyOpenCodeRunner_EnvVarsInjected(t *testing.T) {
+	cfg := &config.WorkflowConfig{}
+	runner, err := NewOhMyOpenCodeRunner(cfg, time.Second)
+	require.NoError(t, err)
+	defer runner.Close()
+
+	confDir := runner.ConfigDir()
+	env := runner.ExtraEnv()
+
+	envMap := make(map[string]string)
+	for _, kv := range env {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	assert.Equal(t, filepath.Join(confDir, "opencode.json"), envMap["OPENCODE_CONFIG"])
+	assert.Equal(t, confDir, envMap["OPENCODE_CONFIG_DIR"])
+	assert.Equal(t, "1", envMap["OPENCODE_DISABLE_PROJECT_CONFIG"])
+	assert.Contains(t, envMap["NODE_PATH"], filepath.Join(confDir, "node_modules"))
+}
+
+func TestOhMyOpenCodeRunner_NodePathPreservesExisting(t *testing.T) {
+	t.Setenv("NODE_PATH", "/existing/path")
+
+	cfg := &config.WorkflowConfig{}
+	runner, err := NewOhMyOpenCodeRunner(cfg, time.Second)
+	require.NoError(t, err)
+	defer runner.Close()
+
+	env := runner.ExtraEnv()
+	envMap := make(map[string]string)
+	for _, kv := range env {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	nodePath := envMap["NODE_PATH"]
+	assert.Contains(t, nodePath, filepath.Join(runner.ConfigDir(), "node_modules"))
+	assert.Contains(t, nodePath, "/existing/path")
 }
