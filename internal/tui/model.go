@@ -20,13 +20,14 @@ import (
 const refreshInterval = time.Second
 
 type Model struct {
-	header   Header
-	table    Table
-	backoff  Backoff
-	viewport viewport.Model
-	keys     KeyMap
-	spinner  spinner.Model
-	help     help.Model
+	header    Header
+	table     Table
+	backoff   Backoff
+	teamTable TeamTable
+	viewport  viewport.Model
+	keys      KeyMap
+	spinner   spinner.Model
+	help      help.Model
 
 	width    int
 	height   int
@@ -37,6 +38,8 @@ type Model struct {
 	agentStartTime map[string]time.Time
 	backoffs       map[string]BackoffRow
 	backoffRetryAt map[string]time.Time
+	teams          map[string]TeamRow
+	teamWorkers    map[string][]TeamWorkerRow
 	stats          HeaderData
 	startTime      time.Time
 	unknownEvents  int
@@ -53,6 +56,7 @@ func NewModel() Model {
 		header:         NewHeader(),
 		table:          NewTable(),
 		backoff:        NewBackoff(),
+		teamTable:      NewTeamTable(),
 		viewport:       vp,
 		keys:           NewKeyMap(),
 		spinner:        s,
@@ -61,6 +65,8 @@ func NewModel() Model {
 		agentStartTime: make(map[string]time.Time),
 		backoffs:       make(map[string]BackoffRow),
 		backoffRetryAt: make(map[string]time.Time),
+		teams:          make(map[string]TeamRow),
+		teamWorkers:    make(map[string][]TeamWorkerRow),
 		startTime:      now,
 		stats: HeaderData{
 			RefreshIn: 1,
@@ -103,6 +109,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.header = m.header.SetWidth(msg.Width)
 		m.table = m.table.SetWidth(msg.Width)
 		m.backoff = m.backoff.SetWidth(msg.Width)
+		m.teamTable = m.teamTable.SetWidth(msg.Width)
 		m.help.SetWidth(msg.Width)
 		headerH := lipgloss.Height(m.header.View())
 		helpH := lipgloss.Height(m.help.View(m.keys))
@@ -121,6 +128,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case OrchestratorEventMsg:
 		m = m.applyOrchestratorEvent(msg.Event)
+	case TeamEventMsg:
+		m = m.applyTeamEvent(msg.Event)
 	case tickMsg:
 		m = m.refreshDerivedFields(time.Time(msg))
 		cmds := []tea.Cmd{doTick()}
@@ -348,9 +357,13 @@ func (m Model) refreshDerivedFields(now time.Time) Model {
 func (m *Model) syncTables() {
 	m.table = m.table.Update(agentRowsSorted(m.agents), m.spinner.View())
 	m.backoff = m.backoff.Update(backoffRowsSorted(m.backoffs))
+	m.teamTable = m.teamTable.Update(teamRowsSorted(m.teams), m.teamWorkers, m.spinner.View())
 	content := m.table.View()
 	if bv := m.backoff.View(); bv != "" {
 		content += "\n" + bv
+	}
+	if tv := m.teamTable.View(); tv != "" {
+		content += "\n" + tv
 	}
 	m.viewport.SetContent(content)
 }
@@ -389,4 +402,96 @@ func durationString(d time.Duration) string {
 	}
 	seconds := int(d.Seconds())
 	return (time.Duration(seconds) * time.Second).String()
+}
+
+func teamRowsSorted(items map[string]TeamRow) []TeamRow {
+	keys := make([]string, 0, len(items))
+	for teamName := range items {
+		keys = append(keys, teamName)
+	}
+	sort.Strings(keys)
+
+	rows := make([]TeamRow, 0, len(keys))
+	for _, teamName := range keys {
+		rows = append(rows, items[teamName])
+	}
+	return rows
+}
+
+func (m Model) applyTeamEvent(event types.TeamEvent) Model {
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+
+	switch event.Type {
+	case "team_created":
+		m.teams[event.TeamName] = TeamRow{
+			TeamName:       event.TeamName,
+			Phase:          "team-plan",
+			Workers:        0,
+			ActiveWorkers:  0,
+			Tasks:          0,
+			CompletedTasks: 0,
+			FailedTasks:    0,
+			FixLoops:       0,
+			Age:            "0s",
+		}
+		m.teamWorkers[event.TeamName] = []TeamWorkerRow{}
+		m.syncTables()
+	case "phase_started":
+		if row, exists := m.teams[event.TeamName]; exists {
+			if phase, ok := event.Data["phase"].(string); ok {
+				row.Phase = phase
+				m.teams[event.TeamName] = row
+			}
+			m.syncTables()
+		}
+	case "task_claimed":
+		if workerID, ok := event.Data["worker_id"].(string); ok {
+			if taskID, ok := event.Data["task_id"].(string); ok {
+				workers := m.teamWorkers[event.TeamName]
+				found := false
+				for i, w := range workers {
+					if w.WorkerID == workerID {
+						w.CurrentTask = taskID
+						w.Status = "working"
+						workers[i] = w
+						found = true
+						break
+					}
+				}
+				if !found {
+					workers = append(workers, TeamWorkerRow{
+						WorkerID:    workerID,
+						Status:      "working",
+						CurrentTask: taskID,
+						PID:         0,
+						Age:         "0s",
+					})
+				}
+				m.teamWorkers[event.TeamName] = workers
+				m.syncTables()
+			}
+		}
+	case "task_completed":
+		if row, exists := m.teams[event.TeamName]; exists {
+			row.CompletedTasks++
+			m.teams[event.TeamName] = row
+			m.syncTables()
+		}
+	case "task_failed":
+		if row, exists := m.teams[event.TeamName]; exists {
+			row.FailedTasks++
+			m.teams[event.TeamName] = row
+			m.syncTables()
+		}
+	case "pipeline_completed":
+		if row, exists := m.teams[event.TeamName]; exists {
+			row.Phase = "complete"
+			m.teams[event.TeamName] = row
+			m.syncTables()
+		}
+	}
+
+	return m
 }
