@@ -220,6 +220,12 @@ func (m Model) applyOrchestratorEvent(event orchestrator.OrchestratorEvent) Mode
 			if update.ProjectURL != "" {
 				m.stats.ProjectURL = update.ProjectURL
 			}
+			if update.TrackerType != "" {
+				m.stats.TrackerType = update.TrackerType
+			}
+			if update.TrackerScope != "" {
+				m.stats.TrackerScope = update.TrackerScope
+			}
 			m = m.refreshDerivedFields(event.Timestamp)
 		default:
 			log.Warn("event payload type mismatch",

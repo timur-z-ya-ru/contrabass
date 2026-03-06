@@ -263,33 +263,50 @@ func TestTableView_NarrowWidthNoOverflow(t *testing.T) {
 	}
 }
 
-// TestModel_StatusUpdatePopulatesHeaderModelProject verifies that ModelName
-// and ProjectURL from StatusUpdate events are mapped to HeaderData.
-func TestModel_StatusUpdatePopulatesHeaderModelProject(t *testing.T) {
+// TestModel_StatusUpdatePopulatesHeaderMetadata verifies that tracker metadata
+// from StatusUpdate events is mapped to HeaderData.
+func TestModel_StatusUpdatePopulatesHeaderMetadata(t *testing.T) {
 	tests := []struct {
-		name       string
-		modelName  string
-		projectURL string
+		name         string
+		modelName    string
+		projectURL   string
+		trackerType  string
+		trackerScope string
 	}{
 		{
-			name:       "both fields populated",
-			modelName:  "gpt-4o",
-			projectURL: "https://github.com/example/project",
+			name:         "all fields populated",
+			modelName:    "gpt-4o",
+			projectURL:   "https://github.com/example/project",
+			trackerType:  "github",
+			trackerScope: "https://github.com/example/project",
 		},
 		{
-			name:       "only model name",
-			modelName:  "claude-3",
-			projectURL: "",
+			name:         "only model name",
+			modelName:    "claude-3",
+			projectURL:   "",
+			trackerType:  "",
+			trackerScope: "",
 		},
 		{
-			name:       "only project URL",
-			modelName:  "",
-			projectURL: "https://github.com/example/other",
+			name:         "only project URL",
+			modelName:    "",
+			projectURL:   "https://github.com/example/other",
+			trackerType:  "",
+			trackerScope: "",
 		},
 		{
-			name:       "empty fields preserve existing values",
-			modelName:  "",
-			projectURL: "",
+			name:         "internal tracker scope",
+			modelName:    "",
+			projectURL:   "",
+			trackerType:  "internal",
+			trackerScope: ".contrabass/board",
+		},
+		{
+			name:         "empty fields preserve existing values",
+			modelName:    "",
+			projectURL:   "",
+			trackerType:  "",
+			trackerScope: "",
 		},
 	}
 
@@ -299,14 +316,18 @@ func TestModel_StatusUpdatePopulatesHeaderModelProject(t *testing.T) {
 			// Pre-set values to verify empty strings don't overwrite.
 			m.stats.ModelName = "existing-model"
 			m.stats.ProjectURL = "https://existing.url"
+			m.stats.TrackerType = "existing-tracker"
+			m.stats.TrackerScope = "existing-scope"
 
 			event := orchestrator.OrchestratorEvent{
 				Type:      orchestrator.EventStatusUpdate,
 				Timestamp: time.Now(),
 				Data: orchestrator.StatusUpdate{
-					Stats:      orchestrator.Stats{Running: 1, MaxAgents: 4},
-					ModelName:  tt.modelName,
-					ProjectURL: tt.projectURL,
+					Stats:        orchestrator.Stats{Running: 1, MaxAgents: 4},
+					ModelName:    tt.modelName,
+					ProjectURL:   tt.projectURL,
+					TrackerType:  tt.trackerType,
+					TrackerScope: tt.trackerScope,
 				},
 			}
 
@@ -327,9 +348,25 @@ func TestModel_StatusUpdatePopulatesHeaderModelProject(t *testing.T) {
 					"empty ProjectURL should not overwrite existing value")
 			}
 
+			if tt.trackerType != "" {
+				assert.Equal(t, tt.trackerType, model.stats.TrackerType)
+			} else {
+				assert.Equal(t, "existing-tracker", model.stats.TrackerType,
+					"empty TrackerType should not overwrite existing value")
+			}
+
+			if tt.trackerScope != "" {
+				assert.Equal(t, tt.trackerScope, model.stats.TrackerScope)
+			} else {
+				assert.Equal(t, "existing-scope", model.stats.TrackerScope,
+					"empty TrackerScope should not overwrite existing value")
+			}
+
 			// Verify header data is synced.
 			assert.Equal(t, model.stats.ModelName, model.header.data.ModelName)
 			assert.Equal(t, model.stats.ProjectURL, model.header.data.ProjectURL)
+			assert.Equal(t, model.stats.TrackerType, model.header.data.TrackerType)
+			assert.Equal(t, model.stats.TrackerScope, model.header.data.TrackerScope)
 
 			// Verify other stats still mapped correctly.
 			assert.Equal(t, 1, model.stats.RunningAgents)
