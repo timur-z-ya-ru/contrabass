@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -474,6 +475,60 @@ func TestOpenCodeRunner_WorkspaceScopedServers(t *testing.T) {
 	require.NoError(t, runner.Stop(procB))
 }
 
+func TestOpenCodeRunner_EnsureServerStartsWorkspacesInParallel(t *testing.T) {
+	stateDir := t.TempDir()
+	binaryPath := writeTestOpenCodeServerBinary(t, stateDir)
+
+	runner := NewOpenCodeRunner(binaryPath, 8787, "", "", 2*time.Second)
+	runner.SetExtraEnv([]string{"TEST_STATE_DIR=" + stateDir})
+	t.Cleanup(func() {
+		require.NoError(t, runner.Close())
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	workspaceA := filepath.Join(stateDir, "workspace-a")
+	workspaceB := filepath.Join(stateDir, "workspace-b")
+	require.NoError(t, os.MkdirAll(workspaceA, 0o755))
+	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
+
+	type result struct {
+		url string
+		pid int
+		err error
+	}
+
+	results := make(chan result, 2)
+	go func() {
+		url, pid, err := runner.ensureServer(ctx, workspaceA)
+		results <- result{url: url, pid: pid, err: err}
+	}()
+	go func() {
+		url, pid, err := runner.ensureServer(ctx, workspaceB)
+		results <- result{url: url, pid: pid, err: err}
+	}()
+
+	assert.Eventually(t, func() bool {
+		_, errA := os.Stat(filepath.Join(stateDir, "started-8787"))
+		_, errB := os.Stat(filepath.Join(stateDir, "started-8788"))
+		return errA == nil && errB == nil
+	}, time.Second, 20*time.Millisecond)
+
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "release"), []byte("ok"), 0o644))
+
+	res1 := <-results
+	res2 := <-results
+	require.NoError(t, res1.err)
+	require.NoError(t, res2.err)
+	assert.NotZero(t, res1.pid)
+	assert.NotZero(t, res2.pid)
+	assert.ElementsMatch(t, []string{
+		"http://127.0.0.1:8787",
+		"http://127.0.0.1:8788",
+	}, []string{res1.url, res2.url})
+}
+
 func newTestOpenCodeRunner(serverURL string) *OpenCodeRunner {
 	r := NewOpenCodeRunner("opencode serve", 0, "", "", 2*time.Second)
 	primeTestOpenCodeServer(r, "", serverURL, 4242)
@@ -486,6 +541,39 @@ func primeTestOpenCodeServer(r *OpenCodeRunner, workspace, serverURL string, pid
 		process: &exec.Cmd{Process: &os.Process{Pid: pid}},
 		port:    0,
 	}
+}
+
+func writeTestOpenCodeServerBinary(t *testing.T, stateDir string) string {
+	t.Helper()
+
+	scriptPath := filepath.Join(stateDir, "fake-opencode.sh")
+	script := `#!/bin/sh
+set -eu
+
+state_dir="${TEST_STATE_DIR:?TEST_STATE_DIR is required}"
+port="0"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --port)
+      port="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+touch "$state_dir/started-$port"
+while [ ! -f "$state_dir/release" ]; do
+  sleep 0.05
+done
+
+echo "listening on http://127.0.0.1:$port"
+sleep 30
+`
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
+	return scriptPath
 }
 
 func setSSEHeaders(w http.ResponseWriter) {

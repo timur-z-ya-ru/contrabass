@@ -35,6 +35,7 @@ type openCodeServer struct {
 	process *exec.Cmd
 	url     string
 	port    int
+	ready   chan struct{}
 }
 
 type OpenCodeRunner struct {
@@ -190,42 +191,106 @@ func (r *OpenCodeRunner) defaultWorkDir() string {
 func (r *OpenCodeRunner) ensureServer(ctx context.Context, workDir string) (string, int, error) {
 	key := serverKey(workDir)
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	for {
+		r.mu.Lock()
+		if server, ok := r.servers[key]; ok && server != nil {
+			if server.ready != nil {
+				ready := server.ready
+				r.mu.Unlock()
+				select {
+				case <-ctx.Done():
+					return "", 0, ctx.Err()
+				case <-ready:
+				}
+				continue
+			}
 
-	if server, ok := r.servers[key]; ok && server != nil && server.url != "" {
-		pid := 0
-		if server.process != nil && server.process.Process != nil {
-			pid = server.process.Process.Pid
+			if server.url != "" {
+				pid := serverPID(server)
+				r.mu.Unlock()
+				return server.url, pid, nil
+			}
+
+			delete(r.servers, key)
 		}
-		return server.url, pid, nil
-	}
 
-	argv := strings.Fields(strings.TrimSpace(r.binaryPath))
-	if len(argv) == 0 {
-		return "", 0, errors.New("opencode binary path is empty")
-	}
+		argv := strings.Fields(strings.TrimSpace(r.binaryPath))
+		if len(argv) == 0 {
+			r.mu.Unlock()
+			return "", 0, errors.New("opencode binary path is empty")
+		}
 
-	port := r.portForNewServerLocked()
+		port := r.portForNewServerLocked()
+		extraEnv := append([]string(nil), r.extraEnv...)
+		placeholder := &openCodeServer{
+			port:  port,
+			ready: make(chan struct{}),
+		}
+		r.servers[key] = placeholder
+		r.mu.Unlock()
+
+		server, err := r.startServer(ctx, argv, workDir, extraEnv, port)
+
+		r.mu.Lock()
+		current, stillCurrent := r.servers[key]
+		if stillCurrent && current == placeholder {
+			if err != nil {
+				delete(r.servers, key)
+			} else {
+				placeholder.process = server.process
+				placeholder.url = server.url
+			}
+		}
+		ready := placeholder.ready
+		placeholder.ready = nil
+		r.mu.Unlock()
+
+		if ready != nil {
+			close(ready)
+		}
+
+		if !stillCurrent || current != placeholder {
+			if err == nil {
+				_ = r.stopServer(server)
+				return "", 0, errors.New("opencode server startup interrupted")
+			}
+			return "", 0, err
+		}
+
+		if err != nil {
+			return "", 0, err
+		}
+
+		return server.url, serverPID(server), nil
+	}
+}
+
+func (r *OpenCodeRunner) startServer(
+	ctx context.Context,
+	argv []string,
+	workDir string,
+	extraEnv []string,
+	port int,
+) (*openCodeServer, error) {
 	if port > 0 {
 		argv = append(argv, "--port", strconv.Itoa(port))
 	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
-	if len(r.extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), append([]string(nil), r.extraEnv...)...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
 	}
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", 0, fmt.Errorf("create opencode stdout pipe: %w", err)
+		return nil, fmt.Errorf("create opencode stdout pipe: %w", err)
 	}
 	cmd.Stderr = io.Discard
 
 	if err := cmd.Start(); err != nil {
-		return "", 0, fmt.Errorf("start opencode server: %w", err)
+		return nil, fmt.Errorf("start opencode server: %w", err)
 	}
 
 	urlCh := make(chan string, 1)
@@ -257,23 +322,21 @@ func (r *OpenCodeRunner) ensureServer(ctx context.Context, workDir string) (stri
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return "", 0, ctx.Err()
+		return nil, ctx.Err()
 	case <-timer.C:
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return "", 0, fmt.Errorf("timed out waiting for opencode server startup after %s", r.timeout)
+		return nil, fmt.Errorf("timed out waiting for opencode server startup after %s", r.timeout)
 	case err := <-errCh:
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return "", 0, fmt.Errorf("failed to detect opencode server URL: %w", err)
+		return nil, fmt.Errorf("failed to detect opencode server URL: %w", err)
 	case url := <-urlCh:
-		serverURL := strings.TrimRight(url, "/")
-		r.servers[key] = &openCodeServer{
+		return &openCodeServer{
 			process: cmd,
-			url:     serverURL,
+			url:     strings.TrimRight(url, "/"),
 			port:    port,
-		}
-		return serverURL, cmd.Process.Pid, nil
+		}, nil
 	}
 }
 
@@ -409,6 +472,13 @@ func (r *OpenCodeRunner) firstServerURL() string {
 	}
 
 	return ""
+}
+
+func serverPID(server *openCodeServer) int {
+	if server == nil || server.process == nil || server.process.Process == nil {
+		return 0
+	}
+	return server.process.Process.Pid
 }
 
 func (r *OpenCodeRunner) createSession(ctx context.Context, serverURL string) (string, error) {
