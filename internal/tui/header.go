@@ -23,9 +23,9 @@ import (
 const logoBoxCols = 20
 const logoBoxRows = 10
 
-// mosaicLogoCols/mosaicLogoRows are 1.2x enlarged for richer mosaic detail in TMUX.
-const mosaicLogoCols = 24
-const mosaicLogoRows = 12
+// Exact 2:1 ratio required for square-looking pixels (terminal cells are ~2:1 height:width).
+const mosaicLogoCols = 40
+const mosaicLogoRows = 20
 
 var (
 	headerLogoOnce sync.Once
@@ -302,17 +302,118 @@ func renderMosaicLogo() string {
 		return ""
 	}
 	img = cropToContent(img)
+	pixW := mosaicLogoCols * 2
+	pixH := mosaicLogoRows * 2
+	alphaMask := buildAlphaMask(img, pixW, pixH)
 	img = compositeOnBackground(img)
-	return renderMosaicImage(img)
+	return renderMosaicImage(img, alphaMask)
 }
 
-func renderMosaicImage(img image.Image) string {
+func renderMosaicImage(img image.Image, alphaMask [][]bool) string {
 	pixW := mosaicLogoCols * 2
 	pixH := mosaicLogoRows * 2
 	img = resizeToCover(img, pixW, pixW)
 	img = resizeImage(img, pixW, pixH)
+	img = enhanceContrast(img)
+	if alphaMask != nil {
+		return renderTransparentMosaic(img, alphaMask)
+	}
 	m := mosaic.New().Symbol(mosaic.Half)
 	return strings.TrimRight(m.Render(img), "\n")
+}
+
+func buildAlphaMask(src image.Image, pixW, pixH int) [][]bool {
+	resized := resizeToCover(src, pixW, pixW)
+	resized = resizeImage(resized, pixW, pixH)
+	mask := make([][]bool, pixH)
+	for y := 0; y < pixH; y++ {
+		mask[y] = make([]bool, pixW)
+		for x := 0; x < pixW; x++ {
+			_, _, _, a := resized.At(x, y).RGBA()
+			mask[y][x] = a > 0x8000
+		}
+	}
+	return mask
+}
+
+func renderTransparentMosaic(img image.Image, mask [][]bool) string {
+	b := img.Bounds()
+	// Mosaic maps 2×2 pixels per terminal cell (2 px wide, 2 px tall per half-block char).
+	termCols := b.Dx() / 2
+	termRows := b.Dy() / 2
+	var buf strings.Builder
+	for row := 0; row < termRows; row++ {
+		if row > 0 {
+			buf.WriteByte('\n')
+		}
+		for col := 0; col < termCols; col++ {
+			px := col * 2
+			py := row * 2
+			topVis := maskAt(mask, py, px) || maskAt(mask, py, px+1)
+			botVis := maskAt(mask, py+1, px) || maskAt(mask, py+1, px+1)
+			if !topVis && !botVis {
+				buf.WriteByte(' ')
+				continue
+			}
+			tr, tg, tb := avg2(img, b, px, py, px+1, py)
+			br, bg, bb := avg2(img, b, px, py+1, px+1, py+1)
+			switch {
+			case topVis && botVis:
+				fmt.Fprintf(&buf, "\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm▀\x1b[0m",
+					tr, tg, tb, br, bg, bb)
+			case topVis:
+				fmt.Fprintf(&buf, "\x1b[38;2;%d;%d;%dm▀\x1b[0m", tr, tg, tb)
+			default:
+				fmt.Fprintf(&buf, "\x1b[38;2;%d;%d;%dm▄\x1b[0m", br, bg, bb)
+			}
+		}
+	}
+	return buf.String()
+}
+
+func maskAt(mask [][]bool, y, x int) bool {
+	if y < 0 || y >= len(mask) {
+		return false
+	}
+	if x < 0 || x >= len(mask[y]) {
+		return false
+	}
+	return mask[y][x]
+}
+
+func avg2(img image.Image, b image.Rectangle, x0, y0, x1, y1 int) (uint8, uint8, uint8) {
+	r0, g0, b0, _ := img.At(b.Min.X+x0, b.Min.Y+y0).RGBA()
+	r1, g1, b1, _ := img.At(b.Min.X+x1, b.Min.Y+y1).RGBA()
+	return uint8((r0 + r1) / 2 >> 8), uint8((g0 + g1) / 2 >> 8), uint8((b0 + b1) / 2 >> 8)
+}
+
+// enhanceContrast snaps dark pixels darker to make small features like eyes
+// render crisply. Only affects pixels below a luminance threshold — bright
+// and mid-tone pixels pass through unchanged.
+func enhanceContrast(src image.Image) image.Image {
+	b := src.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := src.At(x, y).RGBA()
+			r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(bl>>8)
+			lum := 0.299*float64(r8) + 0.587*float64(g8) + 0.114*float64(b8)
+			// Only darken pixels below luminance threshold (~30% brightness).
+			// Scale factor fades from 0.3 (strong darken) at lum=0 to 1.0 (no change) at threshold.
+			const threshold = 80.0
+			if lum < threshold {
+				t := lum / threshold
+				scale := 0.3 + 0.7*t*t
+				r8 = uint8(float64(r8) * scale)
+				g8 = uint8(float64(g8) * scale)
+				b8 = uint8(float64(b8) * scale)
+			}
+			dst.SetRGBA(x-b.Min.X, y-b.Min.Y, color.RGBA{
+				R: r8, G: g8, B: b8, A: uint8(a >> 8),
+			})
+		}
+	}
+	return dst
 }
 
 // resizeToCover scales src to fill targetW×targetH (like CSS object-fit: cover),
