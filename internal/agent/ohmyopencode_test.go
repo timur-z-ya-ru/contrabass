@@ -206,3 +206,25 @@ func TestOhMyOpenCodeRunner_NodePathPreservesExisting(t *testing.T) {
 	assert.Contains(t, nodePath, filepath.Join(runner.ConfigDir(), "node_modules"))
 	assert.Contains(t, nodePath, "/existing/path")
 }
+
+func TestOhMyOpenCodeRunner_UsesOpenCodeEnvOverrides(t *testing.T) {
+	t.Setenv("OPENCODE_BINARY", "custom-opencode serve")
+	t.Setenv("OPENCODE_SERVER_PASSWORD", "env-secret")
+	t.Setenv("OPENCODE_SERVER_USERNAME", "env-user")
+
+	cfg := &config.WorkflowConfig{
+		OpenCode: config.OpenCodeConfig{
+			BinaryPath: "config-opencode serve",
+			Password:   "config-secret",
+			Username:   "config-user",
+		},
+	}
+
+	runner, err := NewOhMyOpenCodeRunner(cfg, time.Second)
+	require.NoError(t, err)
+	defer runner.Close()
+
+	assert.Equal(t, "custom-opencode serve", runner.inner.binaryPath)
+	assert.Equal(t, "env-secret", runner.inner.password)
+	assert.Equal(t, "env-user", runner.inner.username)
+}
