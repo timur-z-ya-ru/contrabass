@@ -67,6 +67,57 @@ func TestBuildTeamTasksFromBoardIssue(t *testing.T) {
 	assert.Contains(t, tasks[2].Description, "Blocked by: CB-9")
 }
 
+func TestBuildBoardTeamPlanUsesChildIssues(t *testing.T) {
+	t.Parallel()
+
+	parent := tracker.LocalBoardIssue{
+		ID:          "CB-12",
+		Title:       "Ship autonomous board sync",
+		Description: "Coordinate multiple child tickets.",
+		State:       tracker.LocalBoardStateTodo,
+		Assignee:    "team-alpha",
+	}
+	children := []tracker.LocalBoardIssue{
+		{
+			ID:          "CB-13",
+			ParentID:    "CB-12",
+			Title:       "Build planner",
+			Description: "Create the first child implementation slice.",
+			State:       tracker.LocalBoardStateTodo,
+		},
+		{
+			ID:          "CB-14",
+			ParentID:    "CB-12",
+			Title:       "Wire lifecycle sync",
+			Description: "Sync child tickets from team events.",
+			State:       tracker.LocalBoardStateRetry,
+			BlockedBy:   []string{"CB-13"},
+		},
+		{
+			ID:       "CB-15",
+			ParentID: "CB-12",
+			Title:    "Already shipped",
+			State:    tracker.LocalBoardStateDone,
+		},
+	}
+
+	plan := buildBoardTeamPlan(parent, children)
+	require.Len(t, plan.Tasks, 4)
+
+	assert.Equal(t, "001-cb-12-plan", plan.Tasks[0].ID)
+	assert.Equal(t, "002-cb-12-prd", plan.Tasks[1].ID)
+	assert.Equal(t, "003-cb-13-exec", plan.Tasks[2].ID)
+	assert.Equal(t, "004-cb-14-exec", plan.Tasks[3].ID)
+	assert.Equal(t, []string{"002-cb-12-prd"}, plan.Tasks[2].DependsOn)
+	assert.Equal(t, []string{"002-cb-12-prd", "003-cb-13-exec"}, plan.Tasks[3].DependsOn)
+	assert.Contains(t, plan.Tasks[2].Description, "Parent issue:")
+	assert.Contains(t, plan.Tasks[2].Description, "Child issue:")
+	assert.Equal(t, map[string]string{
+		"003-cb-13-exec": "CB-13",
+		"004-cb-14-exec": "CB-14",
+	}, plan.TaskIssueIDs)
+}
+
 func TestBoardIssueSyncerLifecycle(t *testing.T) {
 	t.Parallel()
 
@@ -83,7 +134,7 @@ func TestBoardIssueSyncerLifecycle(t *testing.T) {
 	issue, err := localTracker.CreateIssue(ctx, "Ship board sync", "Wire team events back into the board", []string{"team"})
 	require.NoError(t, err)
 
-	syncer := newBoardIssueSyncer(localTracker, issue.ID, "issue-cb-1")
+	syncer := newBoardIssueSyncer(localTracker, issue.ID, "issue-cb-1", nil)
 	require.NoError(t, syncer.Start(ctx))
 
 	syncer.HandleEvent(ctx, types.TeamEvent{
@@ -151,7 +202,7 @@ func TestBoardIssueSyncerFinalizeErrorMarksRetry(t *testing.T) {
 	issue, err := localTracker.CreateIssue(ctx, "Retry me", "This run should be marked for retry", nil)
 	require.NoError(t, err)
 
-	syncer := newBoardIssueSyncer(localTracker, issue.ID, "issue-cb-2")
+	syncer := newBoardIssueSyncer(localTracker, issue.ID, "issue-cb-2", nil)
 	require.NoError(t, syncer.Start(ctx))
 
 	syncer.Finalize(ctx, errors.New("boom"))
@@ -165,4 +216,81 @@ func TestBoardIssueSyncerFinalizeErrorMarksRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, comments)
 	assert.Contains(t, comments[len(comments)-1].Body, "ended with error: boom")
+}
+
+func TestBoardIssueSyncerSyncsChildIssues(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	localTracker := tracker.NewLocalTracker(tracker.LocalConfig{
+		BoardDir:    filepath.Join(t.TempDir(), "board"),
+		IssuePrefix: "CB",
+		Actor:       "team:issue-cb-12",
+	})
+
+	_, err := localTracker.InitBoard(ctx)
+	require.NoError(t, err)
+
+	parent, err := localTracker.CreateIssue(ctx, "Parent board issue", "Top-level execution ticket", []string{"team"})
+	require.NoError(t, err)
+	childOne, err := localTracker.CreateIssueWithOptions(ctx, tracker.LocalIssueCreateOptions{
+		Title:    "Child one",
+		ParentID: parent.ID,
+	})
+	require.NoError(t, err)
+	childTwo, err := localTracker.CreateIssueWithOptions(ctx, tracker.LocalIssueCreateOptions{
+		Title:     "Child two",
+		ParentID:  parent.ID,
+		BlockedBy: []string{childOne.ID},
+	})
+	require.NoError(t, err)
+
+	plan := buildBoardTeamPlan(parent, []tracker.LocalBoardIssue{childOne, childTwo})
+	syncer := newBoardIssueSyncer(localTracker, parent.ID, "issue-cb-12", plan.TaskIssueIDs)
+	require.NoError(t, syncer.Start(ctx))
+
+	syncer.HandleEvent(ctx, types.TeamEvent{
+		Type:      "task_claimed",
+		TeamName:  "issue-cb-12",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"worker_id": "worker-1",
+			"task_id":   "003-cb-2-exec",
+		},
+	})
+	syncer.HandleEvent(ctx, types.TeamEvent{
+		Type:      "task_completed",
+		TeamName:  "issue-cb-12",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"worker_id": "worker-1",
+			"task_id":   "003-cb-2-exec",
+		},
+	})
+	syncer.HandleEvent(ctx, types.TeamEvent{
+		Type:      "task_failed",
+		TeamName:  "issue-cb-12",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"worker_id": "worker-2",
+			"task_id":   "004-cb-3-exec",
+			"error":     "boom",
+		},
+	})
+
+	firstChild, err := localTracker.GetIssue(ctx, childOne.ID)
+	require.NoError(t, err)
+	assert.Equal(t, tracker.LocalBoardStateDone, firstChild.State)
+	assert.Equal(t, "complete", firstChild.TrackerMeta["team_status"])
+
+	secondChild, err := localTracker.GetIssue(ctx, childTwo.ID)
+	require.NoError(t, err)
+	assert.Equal(t, tracker.LocalBoardStateRetry, secondChild.State)
+	assert.Equal(t, "retry", secondChild.TrackerMeta["team_status"])
+	assert.Equal(t, parent.ID, secondChild.TrackerMeta["parent_issue_id"])
+
+	childComments, err := localTracker.ListComments(ctx, childTwo.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, childComments)
+	assert.Contains(t, childComments[len(childComments)-1].Body, "failed 004-cb-3-exec")
 }

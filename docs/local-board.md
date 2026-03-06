@@ -78,8 +78,12 @@ Current bridge behavior:
 
 - derives a default team name from the board issue when `--name` is omitted
 - generates a plan → PRD → exec task chain from the board issue
+- when child board issues exist, turns each non-`done` child ticket into its own
+  executable team task and maps child `blocked_by` edges into team task
+  dependencies
 - claims the board issue to the team automatically
 - appends team lifecycle activity back to board comments
+- mirrors child task lifecycle back into child board ticket state/comments
 - moves the board issue to `done` on success or `retry` on run failure
 
 This is the first slice of the autonomous board/team loop where AI agents can
@@ -96,6 +100,7 @@ Dispatch rules:
 
 - only `todo` and `retry` issues are eligible
 - claimed issues are skipped
+- child issues are skipped while their parent issue is already running
 - blockers listed in `blocked_by` must already be `done`
 - `--team-name` limits selection to matching or unassigned issues
 - if an issue already has an `assignee`, that becomes the default team name

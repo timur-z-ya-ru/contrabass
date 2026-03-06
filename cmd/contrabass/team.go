@@ -224,8 +224,14 @@ func runTeamWithOptions(opts teamRunOptions) error {
 			IssuePrefix: cfg.LocalIssuePrefix(),
 			Actor:       "team:" + teamName,
 		})
-		tasks = buildTeamTasksFromBoardIssue(issue)
-		boardSyncer = newBoardIssueSyncer(localTracker, opts.IssueID, teamName)
+		childIssues, err := localTracker.ListChildIssues(context.Background(), issue.ID)
+		if err != nil {
+			return fmt.Errorf("loading child issues for %q: %w", opts.IssueID, err)
+		}
+
+		teamPlan := buildBoardTeamPlan(issue, childIssues)
+		tasks = teamPlan.Tasks
+		boardSyncer = newBoardIssueSyncer(localTracker, opts.IssueID, teamName, teamPlan.TaskIssueIDs)
 	} else {
 		// 4. Read tasks JSON file
 		tasksData, err := os.ReadFile(opts.TasksPath)
