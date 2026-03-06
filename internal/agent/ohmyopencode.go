@@ -41,8 +41,7 @@ type ohMyOpenCodeJSON struct {
 }
 
 type ohMyAgentJSON struct {
-	Model    string `json:"model"`
-	Fallback string `json:"fallback,omitempty"`
+	Model string `json:"model"`
 }
 
 type ohMyCategoryJSON struct {
@@ -149,14 +148,12 @@ func (r *OhMyOpenCodeRunner) writeOhMyOpenCodeJSON() error {
 
 	if len(cfgAgents) == 0 {
 		agents["sisyphus"] = ohMyAgentJSON{
-			Model:    "anthropic/claude-sonnet-4-6",
-			Fallback: "anthropic/claude-haiku-4-5",
+			Model: "anthropic/claude-sonnet-4-6",
 		}
 	} else {
 		for name, a := range cfgAgents {
 			agents[name] = ohMyAgentJSON{
-				Model:    a.Model,
-				Fallback: a.Fallback,
+				Model: a.Model,
 			}
 		}
 	}

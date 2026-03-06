@@ -37,7 +37,8 @@ func TestOhMyOpenCodeRunner_DefaultConfigs(t *testing.T) {
 	sisyphus, ok := agents["sisyphus"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", sisyphus["model"])
-	assert.Equal(t, "anthropic/claude-haiku-4-5", sisyphus["fallback"])
+	_, hasFallback := sisyphus["fallback"]
+	assert.False(t, hasFallback)
 
 	categories, ok := ohMyDoc["categories"].(map[string]interface{})
 	require.True(t, ok)
@@ -68,7 +69,7 @@ func TestOhMyOpenCodeRunner_CustomConfigs(t *testing.T) {
 			PluginVersion: "oh-my-opencode@3.10.0",
 			Plugins:       []string{"opencode-antigravity-auth@1.2.7-beta.3"},
 			Agents: map[string]config.OhMyOpenCodeAgent{
-				"sisyphus": {Model: "anthropic/claude-opus-4-5", Fallback: "anthropic/claude-haiku-4-5"},
+				"sisyphus": {Model: "anthropic/claude-opus-4-5"},
 				"builder":  {Model: "anthropic/claude-sonnet-4-6"},
 			},
 			Categories: map[string]config.OhMyOpenCodeCategory{
@@ -99,7 +100,8 @@ func TestOhMyOpenCodeRunner_CustomConfigs(t *testing.T) {
 
 	sisyphus := agents["sisyphus"].(map[string]interface{})
 	assert.Equal(t, "anthropic/claude-opus-4-5", sisyphus["model"])
-	assert.Equal(t, "anthropic/claude-haiku-4-5", sisyphus["fallback"])
+	_, hasFallback := sisyphus["fallback"]
+	assert.False(t, hasFallback)
 
 	builder := agents["builder"].(map[string]interface{})
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", builder["model"])

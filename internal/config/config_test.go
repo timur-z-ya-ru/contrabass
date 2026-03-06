@@ -471,7 +471,7 @@ func TestWorkflowConfig_OhMyOpenCodeDefaults(t *testing.T) {
 					PluginVersion: "oh-my-opencode@3.10.0",
 					Plugins:       []string{"opencode-antigravity-auth@1.2.7-beta.3"},
 					Agents: map[string]OhMyOpenCodeAgent{
-						"sisyphus": {Model: "anthropic/claude-opus-4-5", Fallback: "anthropic/claude-haiku-4-5"},
+						"sisyphus": {Model: "anthropic/claude-opus-4-5"},
 					},
 					Categories: map[string]OhMyOpenCodeCategory{
 						"quick": {Model: "anthropic/claude-haiku-4-5"},
@@ -486,7 +486,7 @@ func TestWorkflowConfig_OhMyOpenCodeDefaults(t *testing.T) {
 			wantPluginVersion: "oh-my-opencode@3.10.0",
 			wantPlugins:       []string{"opencode-antigravity-auth@1.2.7-beta.3"},
 			wantAgents: map[string]OhMyOpenCodeAgent{
-				"sisyphus": {Model: "anthropic/claude-opus-4-5", Fallback: "anthropic/claude-haiku-4-5"},
+				"sisyphus": {Model: "anthropic/claude-opus-4-5"},
 			},
 			wantCategories: map[string]OhMyOpenCodeCategory{
 				"quick": {Model: "anthropic/claude-haiku-4-5"},
@@ -527,7 +527,6 @@ func TestParseWorkflow_OhMyOpenCodeConfig(t *testing.T) {
 	agents := cfg.OhMyOpenCodeAgents()
 	require.Contains(t, agents, "sisyphus")
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", agents["sisyphus"].Model)
-	assert.Equal(t, "anthropic/claude-haiku-4-5", agents["sisyphus"].Fallback)
 
 	categories := cfg.OhMyOpenCodeCategories()
 	require.Contains(t, categories, "quick")
