@@ -417,9 +417,10 @@ func (c *Coordinator) executeTask(ctx context.Context, task *types.TeamTask, tok
 }
 
 func (c *Coordinator) renewLeaseLoop(ctx context.Context, taskID, token string) {
-	interval := time.Duration(c.cfg.TeamClaimLeaseSeconds()/3) * time.Second
-	if interval < 10*time.Second {
-		interval = 10 * time.Second
+	leaseSeconds := c.cfg.TeamClaimLeaseSeconds()
+	interval := time.Duration(leaseSeconds/3) * time.Second
+	if interval < 1*time.Second {
+		interval = 1 * time.Second
 	}
 
 	ticker := time.NewTicker(interval)

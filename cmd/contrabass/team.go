@@ -193,9 +193,12 @@ func runTeam(cmd *cobra.Command, args []string) error {
 		AgentType:         cfg.AgentType(),
 	}
 
-	// Override max workers if provided
+	// Override max workers if provided — update both teamCfg and the parsed
+	// config so that Coordinator.runExecPhase (which reads c.cfg.TeamMaxWorkers())
+	// sees the CLI override.
 	if maxWorkers > 0 {
 		teamCfg.MaxWorkers = maxWorkers
+		cfg.Team.MaxWorkers = maxWorkers
 	}
 
 	// 8. Initialize team
