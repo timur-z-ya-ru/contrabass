@@ -7,7 +7,7 @@
 > **A project-level orchestrator for AI coding agents** <br />
 > Go + Charm stack reimplementation of OpenAI's Symphony ([openai/symphony](https://github.com/openai/symphony)) — manage work, not agents
 
-![Contrabass Demo (TUI in Action)](./.github/assets/demo.png)
+![Contrabass Demo (TUI in Action)](https://raw.githubusercontent.com/junhoyeo/contrabass/main/.github/assets/demo.png)
 
 </div>
 
@@ -272,10 +272,10 @@ Direct dependencies from the [Charm](https://charm.sh) v2 ecosystem:
 
 | Logo | Library | Import Path | Purpose |
 |------|---------|-------------|---------|
-| &nbsp;&nbsp; <img height="64px" src=".github/assets/charm/charm-bubbletea.webp" alt="Bubble Tea" /> | [**Bubble Tea**](https://github.com/charmbracelet/bubbletea) | `charm.land/bubbletea/v2` | TUI framework (Elm architecture) |
-| <img height="64px" src=".github/assets/charm/charm-lipgloss.webp" alt="Lip Gloss" /> | [**Lip Gloss**](https://github.com/charmbracelet/lipgloss) | `charm.land/lipgloss/v2` | Styling & layout |
-| <img height="64px" src=".github/assets/charm/charm-bubbles.webp" alt="Bubbles" /> | [**Bubbles**](https://github.com/charmbracelet/bubbles) | `charm.land/bubbles/v2` | Reusable TUI components |
-| <img height="64px" src=".github/assets/charm/charm-log.webp" alt="Log" /> | [**Log**](https://github.com/charmbracelet/log) | `github.com/charmbracelet/log` | Structured logging |
+| &nbsp;&nbsp; <img height="64px" src="https://raw.githubusercontent.com/junhoyeo/contrabass/main/.github/assets/charm/charm-bubbletea.webp" alt="Bubble Tea" /> | [**Bubble Tea**](https://github.com/charmbracelet/bubbletea) | `charm.land/bubbletea/v2` | TUI framework (Elm architecture) |
+| <img height="64px" src="https://raw.githubusercontent.com/junhoyeo/contrabass/main/.github/assets/charm/charm-lipgloss.webp" alt="Lip Gloss" /> | [**Lip Gloss**](https://github.com/charmbracelet/lipgloss) | `charm.land/lipgloss/v2` | Styling & layout |
+| <img height="64px" src="https://raw.githubusercontent.com/junhoyeo/contrabass/main/.github/assets/charm/charm-bubbles.webp" alt="Bubbles" /> | [**Bubbles**](https://github.com/charmbracelet/bubbles) | `charm.land/bubbles/v2` | Reusable TUI components |
+| <img height="64px" src="https://raw.githubusercontent.com/junhoyeo/contrabass/main/.github/assets/charm/charm-log.webp" alt="Log" /> | [**Log**](https://github.com/charmbracelet/log) | `github.com/charmbracelet/log` | Structured logging |
 | <img height="64px" src="https://user-images.githubusercontent.com/25087/236529273-6f8c841f-f11b-4ec8-b01d-7e3d9b17c85f.png" alt="X" /> | [**x**](https://github.com/charmbracelet/x) | `github.com/charmbracelet/x` | `x/mosaic` for terminal image rendering |
 
 Plus:
