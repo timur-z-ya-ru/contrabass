@@ -41,8 +41,7 @@ type ohMyOpenCodeJSON struct {
 }
 
 type ohMyAgentJSON struct {
-	Model    string `json:"model"`
-	Fallback string `json:"fallback,omitempty"`
+	Model string `json:"model"`
 }
 
 type ohMyCategoryJSON struct {
@@ -84,8 +83,11 @@ func NewOhMyOpenCodeRunner(cfg *config.WorkflowConfig, timeout time.Duration) (*
 		return nil, err
 	}
 
-	binaryPath := cfg.OpenCodeBinaryPath()
-	inner := NewOpenCodeRunner(binaryPath, cfg.OpenCodePort(), cfg.OpenCodePassword(), cfg.OpenCodeUsername(), timeout)
+	binaryPath := getenvOrDefault("OPENCODE_BINARY", cfg.OpenCodeBinaryPath())
+	password := getenvOrDefault("OPENCODE_SERVER_PASSWORD", cfg.OpenCodePassword())
+	username := getenvOrDefault("OPENCODE_SERVER_USERNAME", cfg.OpenCodeUsername())
+
+	inner := NewOpenCodeRunner(binaryPath, cfg.OpenCodePort(), password, username, timeout)
 	inner.SetExtraEnv(runner.buildEnv())
 	runner.inner = inner
 
@@ -99,7 +101,7 @@ func (r *OhMyOpenCodeRunner) buildEnv() []string {
 		"OPENCODE_DISABLE_PROJECT_CONFIG=1",
 	}
 
-	nodePath := r.confDir + "/node_modules"
+	nodePath := filepath.Join(r.confDir, "node_modules")
 	if existing := os.Getenv("NODE_PATH"); existing != "" {
 		nodePath = nodePath + string(os.PathListSeparator) + existing
 	}
@@ -130,7 +132,7 @@ func (r *OhMyOpenCodeRunner) ConfigDir() string {
 }
 
 func (r *OhMyOpenCodeRunner) ExtraEnv() []string {
-	return r.inner.extraEnv
+	return r.inner.ExtraEnv()
 }
 
 func (r *OhMyOpenCodeRunner) writeConfigs() error {
@@ -146,14 +148,12 @@ func (r *OhMyOpenCodeRunner) writeOhMyOpenCodeJSON() error {
 
 	if len(cfgAgents) == 0 {
 		agents["sisyphus"] = ohMyAgentJSON{
-			Model:    "anthropic/claude-sonnet-4-6",
-			Fallback: "anthropic/claude-haiku-4-5",
+			Model: "anthropic/claude-sonnet-4-6",
 		}
 	} else {
 		for name, a := range cfgAgents {
 			agents[name] = ohMyAgentJSON{
-				Model:    a.Model,
-				Fallback: a.Fallback,
+				Model: a.Model,
 			}
 		}
 	}
@@ -237,4 +237,11 @@ func (r *OhMyOpenCodeRunner) writeJSON(path string, v interface{}) error {
 		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
 	return nil
+}
+
+func getenvOrDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

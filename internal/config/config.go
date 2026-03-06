@@ -23,7 +23,6 @@ const (
 
 	defaultOhMyOpenCodePluginVersion = "oh-my-opencode"
 	defaultOhMyOpenCodeAgentModel    = "anthropic/claude-sonnet-4-6"
-	defaultOhMyOpenCodeFallbackModel = "anthropic/claude-haiku-4-5"
 
 	defaultTeamMaxWorkers        = 5
 	defaultTeamMaxFixLoops       = 3
@@ -121,10 +120,9 @@ type OhMyOpenCodeConfig struct {
 	Provider      OhMyOpenCodeProvider            `yaml:"provider"`
 }
 
-// OhMyOpenCodeAgent configures a named agent's primary and fallback model.
+// OhMyOpenCodeAgent configures a named agent override in oh-my-opencode.
 type OhMyOpenCodeAgent struct {
-	Model    string `yaml:"model"`
-	Fallback string `yaml:"fallback"`
+	Model string `yaml:"model"`
 }
 
 // OhMyOpenCodeCategory configures the model for a task category.

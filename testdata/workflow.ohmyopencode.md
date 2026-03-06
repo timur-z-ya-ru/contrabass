@@ -25,7 +25,6 @@ oh_my_opencode:
   agents:
     sisyphus:
       model: anthropic/claude-sonnet-4-6
-      fallback: anthropic/claude-haiku-4-5
   categories:
     visual-engineering:
       model: anthropic/claude-sonnet-4-6
