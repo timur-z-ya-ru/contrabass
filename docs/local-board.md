@@ -44,6 +44,7 @@ contrabass board list
 contrabass board move CB-1 in_progress
 contrabass board comment CB-1 --body "agent run started"
 contrabass board show CB-1
+contrabass team run --config WORKFLOW.md --issue CB-1
 ```
 
 Supported board states:
@@ -64,3 +65,20 @@ The internal board maps board states to the existing tracker contract:
 
 This keeps the orchestrator logic unchanged while enabling local-first
 project tracking.
+
+## Team bridge
+
+`contrabass team run --issue CB-1` hydrates the internal board issue into a
+team run automatically.
+
+Current bridge behavior:
+
+- derives a default team name from the board issue when `--name` is omitted
+- generates a plan → PRD → exec task chain from the board issue
+- claims the board issue to the team automatically
+- appends team lifecycle activity back to board comments
+- moves the board issue to `done` on success or `retry` on run failure
+
+This is the first slice of the autonomous board/team loop where AI agents can
+create board issues, assign them to a team run, and let the runtime move the
+ticket state automatically.
