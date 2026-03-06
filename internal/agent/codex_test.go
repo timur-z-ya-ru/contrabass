@@ -458,6 +458,14 @@ func collectEvents(t *testing.T, events <-chan types.AgentEvent, done <-chan err
 			if err != nil {
 				t.Fatalf("process terminated before all events arrived: %v", err)
 			}
+			for len(out) < expected {
+				select {
+				case ev := <-events:
+					out = append(out, ev)
+				case <-time.After(500 * time.Millisecond):
+					return out
+				}
+			}
 			return out
 		case <-deadline:
 			t.Fatalf("timed out collecting events, got %d", len(out))
