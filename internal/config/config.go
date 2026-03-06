@@ -24,6 +24,11 @@ const (
 	defaultOhMyOpenCodePluginVersion = "oh-my-opencode"
 	defaultOhMyOpenCodeAgentModel    = "anthropic/claude-sonnet-4-6"
 	defaultOhMyOpenCodeFallbackModel = "anthropic/claude-haiku-4-5"
+
+	defaultTeamMaxWorkers        = 5
+	defaultTeamMaxFixLoops       = 3
+	defaultTeamClaimLeaseSeconds = 300
+	defaultTeamStateDir          = ".contrabass/state/team"
 )
 
 var (
@@ -47,6 +52,7 @@ type WorkflowConfig struct {
 	Agent                AgentConfig        `yaml:"agent"`
 	OpenCode             OpenCodeConfig     `yaml:"opencode"`
 	OhMyOpenCode         OhMyOpenCodeConfig `yaml:"oh_my_opencode"`
+	Team                 TeamSectionConfig  `yaml:"team"`
 	PromptTemplate       string             `yaml:"-"`
 }
 
@@ -95,6 +101,14 @@ type OpenCodeConfig struct {
 	Port       int    `yaml:"port"`
 	Password   string `yaml:"password"`
 	Username   string `yaml:"username"`
+}
+
+// TeamSectionConfig holds settings for multi-agent team coordination.
+type TeamSectionConfig struct {
+	MaxWorkers        int    `yaml:"max_workers"`
+	MaxFixLoops       int    `yaml:"max_fix_loops"`
+	ClaimLeaseSeconds int    `yaml:"claim_lease_seconds"`
+	StateDir          string `yaml:"state_dir"`
 }
 
 // OhMyOpenCodeConfig holds settings for the oh-my-opencode agent runner which
@@ -338,6 +352,34 @@ func (c *WorkflowConfig) OhMyOpenCodeProviderAPIKey() string {
 		return ""
 	}
 	return c.OhMyOpenCode.Provider.APIKey
+}
+
+func (c *WorkflowConfig) TeamMaxWorkers() int {
+	if c == nil || c.Team.MaxWorkers <= 0 {
+		return defaultTeamMaxWorkers
+	}
+	return c.Team.MaxWorkers
+}
+
+func (c *WorkflowConfig) TeamMaxFixLoops() int {
+	if c == nil || c.Team.MaxFixLoops <= 0 {
+		return defaultTeamMaxFixLoops
+	}
+	return c.Team.MaxFixLoops
+}
+
+func (c *WorkflowConfig) TeamClaimLeaseSeconds() int {
+	if c == nil || c.Team.ClaimLeaseSeconds <= 0 {
+		return defaultTeamClaimLeaseSeconds
+	}
+	return c.Team.ClaimLeaseSeconds
+}
+
+func (c *WorkflowConfig) TeamStateDir() string {
+	if c == nil || c.Team.StateDir == "" {
+		return defaultTeamStateDir
+	}
+	return c.Team.StateDir
 }
 
 func (c *WorkflowConfig) GitHubOwner() string {
