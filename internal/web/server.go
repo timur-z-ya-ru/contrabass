@@ -12,6 +12,7 @@ import (
 
 	"github.com/junhoyeo/contrabass/internal/hub"
 	"github.com/junhoyeo/contrabass/internal/orchestrator"
+	"github.com/junhoyeo/contrabass/internal/tracker"
 )
 
 const defaultListenAddr = "localhost:8080"
@@ -20,18 +21,27 @@ type SnapshotProvider interface {
 	Snapshot() orchestrator.StateSnapshot
 }
 
+type BoardProvider interface {
+	ListIssues(ctx context.Context, includeDone bool) ([]tracker.LocalBoardIssue, error)
+	GetIssue(ctx context.Context, issueID string) (tracker.LocalBoardIssue, error)
+	CreateIssue(ctx context.Context, title, description string, labels []string) (tracker.LocalBoardIssue, error)
+	UpdateIssue(ctx context.Context, issueID string, mutate func(*tracker.LocalBoardIssue) error) (tracker.LocalBoardIssue, error)
+	MoveIssue(ctx context.Context, issueID string, state tracker.LocalBoardState) (tracker.LocalBoardIssue, error)
+}
+
 type Server struct {
 	httpServer       *http.Server
-	hub              *hub.Hub[orchestrator.OrchestratorEvent]
+	hub              *hub.Hub[WebEvent]
 	dashboardFS      fs.FS
 	listenAddr       string
 	snapshotProvider SnapshotProvider
+	boardProvider    BoardProvider
 }
 
 func NewServer(
 	addr string,
 	provider SnapshotProvider,
-	hub *hub.Hub[orchestrator.OrchestratorEvent],
+	hub *hub.Hub[WebEvent],
 	dashboardFS fs.FS,
 ) *Server {
 	listenAddr := normalizeListenAddr(addr)
@@ -55,6 +65,10 @@ func normalizeListenAddr(addr string) string {
 	}
 
 	return trimmed
+}
+
+func (s *Server) SetBoardProvider(provider BoardProvider) {
+	s.boardProvider = provider
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -110,6 +124,10 @@ func (s *Server) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/state", s.withCORS(s.handleGetState))
 	mux.HandleFunc("GET /api/v1/{identifier}", s.withCORS(s.handleGetIssue))
+	mux.HandleFunc("GET /api/v1/board/issues", s.withCORS(s.handleListBoardIssues))
+	mux.HandleFunc("GET /api/v1/board/issues/{identifier}", s.withCORS(s.handleGetBoardIssue))
+	mux.HandleFunc("POST /api/v1/board/issues", s.withCORS(s.handleCreateBoardIssue))
+	mux.HandleFunc("PATCH /api/v1/board/issues/{identifier}", s.withCORS(s.handleUpdateBoardIssue))
 	mux.HandleFunc("POST /api/v1/refresh", s.withCORS(s.handleRefresh))
 	mux.HandleFunc("GET /api/v1/events", s.withCORS(s.handleSSE))
 	mux.HandleFunc("/api/v1/", s.withCORS(func(w http.ResponseWriter, _ *http.Request) {
@@ -124,7 +142,7 @@ func (s *Server) newMux() *http.ServeMux {
 func (s *Server) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

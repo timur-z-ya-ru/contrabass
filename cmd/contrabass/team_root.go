@@ -68,8 +68,8 @@ func runTeamExecutionApp(
 }
 
 func runTeamExecutionWebServer(ctx context.Context, logger *log.Logger, port int) error {
-	events := make(chan orchestrator.OrchestratorEvent, 1)
-	h := hub.NewHub(events)
+	webEvents := make(chan web.WebEvent, 256)
+	h := hub.NewHub(webEvents)
 	go h.Run(ctx)
 
 	dashboardFS, err := fs.Sub(contrabass.DashboardDistFS, "packages/dashboard/dist")

@@ -276,10 +276,18 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 		return runDryRun(ctx, orch)
 	}
 
-	var h *hub.Hub[orchestrator.OrchestratorEvent]
+	var h *hub.Hub[web.WebEvent]
 	if port > 0 {
-		h = hub.NewHub(orch.Events())
+		webEvents := make(chan web.WebEvent, 256)
+		h = hub.NewHub(webEvents)
 		go h.Run(ctx)
+
+		go func() {
+			for orchEvent := range orch.Events() {
+				webEvents <- web.NewOrchestratorWebEvent(orchEvent)
+			}
+			close(webEvents)
+		}()
 
 		dashboardFS, err := fs.Sub(contrabass.DashboardDistFS, "packages/dashboard/dist")
 		if err != nil {
@@ -332,23 +340,29 @@ func runHeadless(
 	ctx context.Context,
 	orch *orchestrator.Orchestrator,
 	logger *log.Logger,
-	h *hub.Hub[orchestrator.OrchestratorEvent],
+	h *hub.Hub[web.WebEvent],
 ) error {
-	events := orch.Events()
 	if h != nil {
 		subID, subscribedEvents := h.Subscribe()
 		defer h.Unsubscribe(subID)
-		events = subscribedEvents
+		go func() {
+			for webEvt := range subscribedEvents {
+				logger.Info("event",
+					"kind", string(webEvt.Kind),
+					"type", webEvt.Type,
+				)
+			}
+		}()
+	} else {
+		go func() {
+			for event := range orch.Events() {
+				logger.Info("event",
+					"type", event.Type.String(),
+					"issue_id", event.IssueID,
+				)
+			}
+		}()
 	}
-
-	go func() {
-		for event := range events {
-			logger.Info("event",
-				"type", event.Type.String(),
-				"issue_id", event.IssueID,
-			)
-		}
-	}()
 
 	return orch.Run(ctx)
 }
@@ -376,7 +390,7 @@ func startSignalShutdownHook(
 func runTUI(
 	ctx context.Context,
 	orch *orchestrator.Orchestrator,
-	h *hub.Hub[orchestrator.OrchestratorEvent],
+	_ *hub.Hub[web.WebEvent],
 ) error {
 	tuiCtx, tuiCancel := context.WithCancel(ctx)
 	defer tuiCancel()
@@ -384,14 +398,7 @@ func runTUI(
 	model := tui.NewModel()
 	p := tea.NewProgram(withViewportProgramOptions(model))
 
-	events := orch.Events()
-	if h != nil {
-		subID, subscribedEvents := h.Subscribe()
-		defer h.Unsubscribe(subID)
-		events = subscribedEvents
-	}
-
-	startTUIEventBridge(tuiCtx, p, events)
+	startTUIEventBridge(tuiCtx, p, orch.Events())
 
 	orchDone := make(chan error, 1)
 	orchestratorRunner := runTUIOrchestrator

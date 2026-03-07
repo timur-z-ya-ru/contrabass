@@ -148,7 +148,7 @@ func TestServerCORSPreflight(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, "GET, POST, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "GET, POST, PATCH, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
 	assert.Equal(t, "Content-Type", rec.Header().Get("Access-Control-Allow-Headers"))
 }
 

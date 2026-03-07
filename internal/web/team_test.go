@@ -20,7 +20,7 @@ func TestTeamSnapshotProviderSnapshotReturnsEmptySnapshot(t *testing.T) {
 }
 
 func TestNewServerWithTeamSnapshotProvider(t *testing.T) {
-	source := make(chan orchestrator.OrchestratorEvent)
+	source := make(chan WebEvent)
 	h := hub.NewHub(source)
 	provider := NewTeamSnapshotProvider()
 
