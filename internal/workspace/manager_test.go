@@ -366,7 +366,7 @@ func TestManager_CleanupContinuesWhenBeforeRemoveHookTimesOut(t *testing.T) {
 			"  esac\n" +
 			"fi\n" +
 			"exec \"" + gitPath + "\" \"$@\"\n"
-		require.NoError(t, os.WriteFile(fakeGitPath, []byte(script), 0o755))
+		writeFakeGit(t, fakeGitPath, script)
 
 		mgr.gitBinary = fakeGitPath
 
@@ -410,4 +410,17 @@ func runGit(t *testing.T, dir string, args ...string) {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// writeFakeGit writes a shell script and ensures the fd is fully synced/closed
+// before returning, preventing "text file busy" (ETXTBSY) on Linux when the
+// script is executed immediately after creation.
+func writeFakeGit(t *testing.T, path, content string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	require.NoError(t, err)
+	_, err = f.WriteString(content)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, f.Close())
 }
