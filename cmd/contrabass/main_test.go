@@ -381,7 +381,7 @@ Prompt.
 		return nil
 	}
 
-	err := run(cfgPath, true, filepath.Join(t.TempDir(), "contrabass.log"), "info", false)
+	err := run(cfgPath, true, filepath.Join(t.TempDir(), "contrabass.log"), "info", false, 0)
 	require.NoError(t, err)
 	assert.True(t, called)
 }
@@ -413,7 +413,7 @@ Prompt.
 		return nil
 	}
 
-	err := run(cfgPath, true, filepath.Join(t.TempDir(), "contrabass.log"), "info", true)
+	err := run(cfgPath, true, filepath.Join(t.TempDir(), "contrabass.log"), "info", true, 0)
 	require.NoError(t, err)
 }
 
@@ -431,7 +431,7 @@ team:
 Prompt.
 `)
 
-	err := run(cfgPath, true, filepath.Join(t.TempDir(), "contrabass.log"), "info", true)
+	err := run(cfgPath, true, filepath.Join(t.TempDir(), "contrabass.log"), "info", true, 0)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, `team execution requires tracker.type internal/local, got "github"`)
 }
