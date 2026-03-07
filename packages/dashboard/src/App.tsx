@@ -5,6 +5,10 @@ import { MetricCards } from './components/MetricCards'
 import { RateLimits } from './components/RateLimits'
 import { RetryQueue } from './components/RetryQueue'
 import { SessionsTable } from './components/SessionsTable'
+import { TeamTable } from './components/TeamTable'
+import { WorkerTable } from './components/WorkerTable'
+import { BoardView } from './components/BoardView'
+import { AgentLogs } from './components/AgentLogs'
 import { useSSE } from './hooks/useSSE'
 
 function computeRuntimeSeconds(startTime: string | undefined): number {
@@ -21,7 +25,7 @@ function computeRuntimeSeconds(startTime: string | undefined): number {
 }
 
 function App() {
-  const { state, connected, error } = useSSE()
+  const { state, connected, error, teamSnapshot, boardIssues, agentLogs } = useSSE()
   const [runtimeSeconds, setRuntimeSeconds] = useState(0)
   const startTime = state?.stats.StartTime
 
@@ -83,6 +87,32 @@ function App() {
           <h2 className="dashboard__panel-title">Rate Limits</h2>
           <RateLimits limits={[]} />
         </section>
+
+        {teamSnapshot ? (
+          <>
+            <section className="dashboard__panel">
+              <h2 className="dashboard__panel-title">Team Status</h2>
+              <TeamTable snapshot={teamSnapshot} />
+            </section>
+
+            <section className="dashboard__panel">
+              <h2 className="dashboard__panel-title">Workers</h2>
+              <WorkerTable workers={teamSnapshot.workers} />
+            </section>
+          </>
+        ) : null}
+
+        <section className="dashboard__panel">
+          <h2 className="dashboard__panel-title">Board</h2>
+          <BoardView issues={boardIssues} />
+        </section>
+
+        {agentLogs.length > 0 ? (
+          <section className="dashboard__panel">
+            <h2 className="dashboard__panel-title">Agent Logs</h2>
+            <AgentLogs logs={agentLogs} />
+          </section>
+        ) : null}
       </main>
     </div>
   )
