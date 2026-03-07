@@ -46,7 +46,17 @@ var (
 	startTUIEventBridge = func(ctx context.Context, p *tea.Program, events <-chan orchestrator.OrchestratorEvent) {
 		tui.StartEventBridge(ctx, p, events)
 	}
-	runRootTeamExecution  = runTeamExecutionApp
+	runRootTeamExecution = func(
+		ctx context.Context,
+		cfgPath string,
+		watcher *config.Watcher,
+		logger *log.Logger,
+		noTUI bool,
+		dryRun bool,
+		port int,
+	) error {
+		return runTeamExecutionApp(ctx, cfgPath, watcher, logger, noTUI, dryRun, port)
+	}
 	runTUIShutdownTimeout = 6 * time.Second
 )
 
@@ -142,7 +152,7 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 
 	switch cfg.TeamExecutionMode() {
 	case config.TeamExecutionModeTeam:
-		return runRootTeamExecution(ctx, cfgPath, watcher, logger, noTUI, dryRun)
+		return runRootTeamExecution(ctx, cfgPath, watcher, logger, noTUI, dryRun, port)
 	case config.TeamExecutionModeSingle:
 		// Continue into the original single-agent orchestrator path.
 	default:

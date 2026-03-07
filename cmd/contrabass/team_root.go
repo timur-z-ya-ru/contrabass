@@ -5,17 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"net"
 	"os"
+	"reflect"
 	"time"
+	"unsafe"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/log"
 
+	contrabass "github.com/junhoyeo/contrabass"
 	"github.com/junhoyeo/contrabass/internal/config"
+	"github.com/junhoyeo/contrabass/internal/hub"
 	"github.com/junhoyeo/contrabass/internal/orchestrator"
 	"github.com/junhoyeo/contrabass/internal/tracker"
 	"github.com/junhoyeo/contrabass/internal/tui"
 	"github.com/junhoyeo/contrabass/internal/types"
+	"github.com/junhoyeo/contrabass/internal/web"
 )
 
 const teamEventBufferSize = 256
@@ -24,6 +31,7 @@ var (
 	startTUITeamEventBridge = tui.StartTeamEventBridge
 	dispatchRootBoardIssues = dispatchBoardIssues
 	runRootTeamIssue        = runTeamWithHooks
+	startTeamWebServer      = runTeamExecutionWebServer
 )
 
 func runTeamExecutionApp(
@@ -33,9 +41,16 @@ func runTeamExecutionApp(
 	logger *log.Logger,
 	noTUI bool,
 	dryRun bool,
+	port int,
 ) error {
 	if watcher == nil {
 		return errors.New("config watcher is required for team execution")
+	}
+
+	if port > 0 {
+		if err := startTeamWebServer(ctx, logger, port); err != nil {
+			return err
+		}
 	}
 
 	if dryRun {
@@ -52,6 +67,57 @@ func runTeamExecutionApp(
 		defer close(teamEvents)
 		return runTeamExecutionLoop(runCtx, cfgPath, watcher, teamEvents, false)
 	})
+}
+
+type noopSnapshotProvider struct{}
+
+func (noopSnapshotProvider) Snapshot() orchestrator.StateSnapshot {
+	return orchestrator.StateSnapshot{}
+}
+
+func runTeamExecutionWebServer(ctx context.Context, logger *log.Logger, port int) error {
+	events := make(chan orchestrator.OrchestratorEvent, 1)
+	h := hub.NewHub(events)
+	go h.Run(ctx)
+
+	dashboardFS, err := fs.Sub(contrabass.DashboardDistFS, "packages/dashboard/dist")
+	if err != nil {
+		return fmt.Errorf("sub dashboard dist fs: %w", err)
+	}
+
+	srv := web.NewServer(fmt.Sprintf("localhost:%d", port), nil, h, dashboardFS)
+	if err := setServerSnapshotProvider(srv, noopSnapshotProvider{}); err != nil {
+		return fmt.Errorf("set snapshot provider: %w", err)
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		return fmt.Errorf("listen web dashboard: %w", err)
+	}
+
+	go func() {
+		if serveErr := srv.Serve(ctx, listener); serveErr != nil && logger != nil {
+			logger.Error("web server error", "err", serveErr)
+		}
+	}()
+
+	fmt.Fprintf(os.Stderr, "Web dashboard available at http://localhost:%d\n", port)
+	return nil
+}
+
+func setServerSnapshotProvider(srv *web.Server, provider web.SnapshotProvider) error {
+	if srv == nil {
+		return errors.New("server is nil")
+	}
+
+	field := reflect.ValueOf(srv).Elem().FieldByName("snapshotProvider")
+	if !field.IsValid() {
+		return errors.New("snapshot provider field not found")
+	}
+
+	writable := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
+	writable.Set(reflect.ValueOf(provider))
+	return nil
 }
 
 func runTeamExecutionLoop(
