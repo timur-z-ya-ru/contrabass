@@ -223,10 +223,11 @@ func (o *Orchestrator) enqueueBackoffFromRunResult(ctx context.Context, issue ty
 		}
 	}
 
+	releaseTimestamp := time.Now()
 	if releaseErr := o.tracker.ReleaseIssue(ctx, issue.ID); releaseErr != nil {
 		logging.LogIssueEvent(o.logger, issue.ID, "release_failed", "err", releaseErr)
 	} else {
-		o.emitIssueReleased(issue.ID, attempt.Attempt, time.Now())
+		o.emitIssueReleased(issue.ID, attempt.Attempt, releaseTimestamp)
 	}
 
 	delayMs := CalculateBackoff(issue.ID, attempt.Attempt, o.currentConfig().MaxRetryBackoffMs())
@@ -277,13 +278,14 @@ func (o *Orchestrator) enqueueBackoffFromRunning(ctx context.Context, issue type
 }
 
 func (o *Orchestrator) releaseClaimAndQueueContinuation(ctx context.Context, issueID string, attempt int, cause error) {
+	releaseTimestamp := time.Now()
+
 	if err := o.tracker.UpdateIssueState(ctx, issueID, types.Released); err != nil {
 		logging.LogIssueEvent(o.logger, issueID, "update_released_failed", "err", err)
 	}
 	if err := o.tracker.ReleaseIssue(ctx, issueID); err != nil {
 		logging.LogIssueEvent(o.logger, issueID, "release_failed", "err", err)
 	}
-	releaseTimestamp := time.Now()
 	o.enqueueContinuation(issueID, attempt, cause.Error())
 	o.emitIssueReleased(issueID, attempt, releaseTimestamp)
 }
@@ -445,6 +447,8 @@ func (o *Orchestrator) stopRun(_ context.Context, issueID string) {
 }
 
 func (o *Orchestrator) releaseIssue(ctx context.Context, issueID string, from types.IssueState, attempt int) {
+	releaseTimestamp := time.Now()
+
 	if issueTransitionErr := TransitionIssueState(from, types.Released); issueTransitionErr == nil {
 		if updateErr := o.tracker.UpdateIssueState(ctx, issueID, types.Released); updateErr != nil {
 			logging.LogIssueEvent(o.logger, issueID, "update_released_failed", "err", updateErr)
@@ -456,7 +460,7 @@ func (o *Orchestrator) releaseIssue(ctx context.Context, issueID string, from ty
 		return
 	}
 
-	o.emitIssueReleased(issueID, attempt, time.Now())
+	o.emitIssueReleased(issueID, attempt, releaseTimestamp)
 }
 
 func (o *Orchestrator) emitIssueReleased(issueID string, attempt int, timestamp time.Time) {
