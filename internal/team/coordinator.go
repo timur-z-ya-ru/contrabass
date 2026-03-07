@@ -2,6 +2,7 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -121,6 +122,7 @@ func (c *Coordinator) Run(ctx context.Context, tasks []types.TeamTask) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	defer cancel()
+	defer close(c.Events)
 
 	for i := range tasks {
 		if err := c.tasks.CreateTask(c.teamName, &tasks[i]); err != nil {
@@ -188,7 +190,10 @@ func (c *Coordinator) runPhase(ctx context.Context, phase types.TeamPhase) error
 func (c *Coordinator) runWorkerPhase(ctx context.Context, next types.TeamPhase, reason string) error {
 	task, token, err := c.tasks.ClaimNextTask(c.teamName, "coordinator")
 	if err != nil {
-		return c.phases.Transition(c.teamName, next, reason+": no tasks")
+		if errors.Is(err, ErrTaskNotClaimable) {
+			return c.phases.Transition(c.teamName, next, reason+": no tasks")
+		}
+		return fmt.Errorf("claim next task: %w", err)
 	}
 
 	if err := c.executeTask(ctx, task, token, "coordinator"); err != nil {
@@ -297,7 +302,10 @@ func (c *Coordinator) workerLoop(ctx context.Context, workerID string) error {
 
 		task, token, err := c.tasks.ClaimNextTask(c.teamName, workerID)
 		if err != nil {
-			return nil
+			if errors.Is(err, ErrTaskNotClaimable) {
+				return nil
+			}
+			return fmt.Errorf("claim next task: %w", err)
 		}
 
 		c.emitEvent("task_claimed", map[string]interface{}{

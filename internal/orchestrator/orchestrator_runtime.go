@@ -429,11 +429,6 @@ func (o *Orchestrator) emitStatusUpdate() {
 	cfg := o.currentConfig()
 	modelName, _ := cfg.Model()
 	projectURL := cfg.TrackerProjectURL()
-	trackerType := cfg.TrackerType()
-	trackerScope := projectURL
-	if trackerType == "internal" || trackerType == "local" {
-		trackerScope = cfg.LocalBoardDir()
-	}
 	o.emitEvent(OrchestratorEvent{
 		Type: EventStatusUpdate,
 		Data: StatusUpdate{
@@ -441,8 +436,6 @@ func (o *Orchestrator) emitStatusUpdate() {
 			BackoffQueue: backoffQueue,
 			ModelName:    modelName,
 			ProjectURL:   projectURL,
-			TrackerType:  trackerType,
-			TrackerScope: trackerScope,
 		},
 	})
 }
