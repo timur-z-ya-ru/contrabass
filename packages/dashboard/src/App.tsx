@@ -48,9 +48,23 @@ function App() {
     return (
       <div className="dashboard">
         <Header connected={connected} runtimeSeconds={runtimeSeconds} />
-        <section className="dashboard__notice" aria-live="polite">
-          <p className="dashboard__notice-title">Connecting to orchestrator stream...</p>
-        </section>
+        <div className="dashboard__skeleton">
+          <div className="dashboard__skeleton-metrics">
+            <div className="skeleton-block skeleton-block--card" />
+            <div className="skeleton-block skeleton-block--card" />
+            <div className="skeleton-block skeleton-block--card" />
+          </div>
+          <div className="dashboard__skeleton-grid">
+            <div className="dashboard__skeleton-primary">
+              <div className="skeleton-block skeleton-block--table" />
+              <div className="skeleton-block skeleton-block--table" />
+            </div>
+            <div className="dashboard__skeleton-sidebar">
+              <div className="skeleton-block skeleton-block--small" />
+              <div className="skeleton-block skeleton-block--small" />
+            </div>
+          </div>
+        </div>
       </div>
     )
   }
@@ -60,60 +74,59 @@ function App() {
       <Header connected={connected} runtimeSeconds={runtimeSeconds} />
 
       {error ? (
-        <section className="dashboard__notice dashboard__notice--error" role="alert">
+        <div className="dashboard__notice dashboard__notice--error" role="alert">
           <p className="dashboard__notice-title">Connection error</p>
           <p className="dashboard__notice-message">{error}</p>
-        </section>
+        </div>
       ) : null}
 
-      <MetricCards
-        stats={state.stats}
-        backoffCount={state.backoff.length}
-        runtimeSeconds={runtimeSeconds}
-      />
+      <MetricCards stats={state.stats} backoffCount={state.backoff.length} />
 
-      <main className="dashboard__content" aria-label="Orchestrator activity">
-        <section className="dashboard__panel">
-          <h2 className="dashboard__panel-title">Running Sessions</h2>
-          <SessionsTable entries={state.running} />
-        </section>
-
-        <section className="dashboard__panel">
-          <h2 className="dashboard__panel-title">Retry Queue</h2>
-          <RetryQueue entries={state.backoff} />
-        </section>
-
-        <section className="dashboard__panel">
-          <h2 className="dashboard__panel-title">Rate Limits</h2>
-          <RateLimits limits={[]} />
-        </section>
-
-        {teamSnapshot ? (
-          <>
-            <section className="dashboard__panel">
-              <h2 className="dashboard__panel-title">Team Status</h2>
-              <TeamTable snapshot={teamSnapshot} />
-            </section>
-
-            <section className="dashboard__panel">
-              <h2 className="dashboard__panel-title">Workers</h2>
-              <WorkerTable workers={teamSnapshot.workers} />
-            </section>
-          </>
-        ) : null}
-
-        <section className="dashboard__panel">
-          <h2 className="dashboard__panel-title">Board</h2>
-          <BoardView issues={boardIssues} />
-        </section>
-
-        {agentLogs.length > 0 ? (
-          <section className="dashboard__panel">
-            <h2 className="dashboard__panel-title">Agent Logs</h2>
-            <AgentLogs logs={agentLogs} />
+      <div className="dashboard__grid">
+        <div className="dashboard__primary">
+          <section className="dashboard__section">
+            <h2 className="dashboard__section-label">Running Sessions</h2>
+            <SessionsTable entries={state.running} />
           </section>
-        ) : null}
-      </main>
+
+          <section className="dashboard__section">
+            <h2 className="dashboard__section-label">Board</h2>
+            <BoardView issues={boardIssues} />
+          </section>
+        </div>
+
+        <aside className="dashboard__sidebar">
+          <section className="dashboard__section">
+            <h2 className="dashboard__section-label">Retry Queue</h2>
+            <RetryQueue entries={state.backoff} />
+          </section>
+
+          <section className="dashboard__section">
+            <h2 className="dashboard__section-label">Rate Limits</h2>
+            <RateLimits limits={[]} />
+          </section>
+
+          {teamSnapshot ? (
+            <>
+              <hr className="dashboard__separator" />
+              <section className="dashboard__section">
+                <h2 className="dashboard__section-label">Team Status</h2>
+                <TeamTable snapshot={teamSnapshot} />
+              </section>
+
+              <section className="dashboard__section">
+                <h2 className="dashboard__section-label">Workers</h2>
+                <WorkerTable workers={teamSnapshot.workers} />
+              </section>
+            </>
+          ) : null}
+        </aside>
+      </div>
+
+      <section className="dashboard__logs">
+        <h2 className="dashboard__section-label">Agent Logs</h2>
+        <AgentLogs logs={agentLogs} />
+      </section>
     </div>
   )
 }
