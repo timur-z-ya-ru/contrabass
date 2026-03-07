@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"maps"
+	"slices"
 )
 
 const (
@@ -23,6 +25,11 @@ const (
 
 	defaultOhMyOpenCodePluginVersion = "oh-my-opencode"
 	defaultOhMyOpenCodeAgentModel    = "anthropic/claude-sonnet-4-6"
+
+	defaultTeamMaxWorkers        = 5
+	defaultTeamMaxFixLoops       = 3
+	defaultTeamClaimLeaseSeconds = 300
+	defaultTeamStateDir          = ".contrabass/state/team"
 )
 
 var (
@@ -46,6 +53,7 @@ type WorkflowConfig struct {
 	Agent                AgentConfig        `yaml:"agent"`
 	OpenCode             OpenCodeConfig     `yaml:"opencode"`
 	OhMyOpenCode         OhMyOpenCodeConfig `yaml:"oh_my_opencode"`
+	Team                 TeamSectionConfig  `yaml:"team"`
 	PromptTemplate       string             `yaml:"-"`
 }
 
@@ -96,6 +104,14 @@ type OpenCodeConfig struct {
 	Username   string `yaml:"username"`
 }
 
+// TeamSectionConfig holds settings for multi-agent team coordination.
+type TeamSectionConfig struct {
+	MaxWorkers        int    `yaml:"max_workers"`
+	MaxFixLoops       int    `yaml:"max_fix_loops"`
+	ClaimLeaseSeconds int    `yaml:"claim_lease_seconds"`
+	StateDir          string `yaml:"state_dir"`
+}
+
 // OhMyOpenCodeConfig holds settings for the oh-my-opencode agent runner which
 // wraps the OpenCode runner with the oh-my-opencode plugin and model routing.
 type OhMyOpenCodeConfig struct {
@@ -121,6 +137,21 @@ type OhMyOpenCodeProvider struct {
 	Name    string `yaml:"name"`
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
+}
+
+// Clone returns a deep copy of the workflow config so callers can safely
+// mutate the result without affecting the original.
+func (c *WorkflowConfig) Clone() *WorkflowConfig {
+	if c == nil {
+		return nil
+	}
+
+	cfg := *c
+	cfg.Tracker.Labels = slices.Clone(c.Tracker.Labels)
+	cfg.OhMyOpenCode.Plugins = slices.Clone(c.OhMyOpenCode.Plugins)
+	cfg.OhMyOpenCode.Agents = maps.Clone(c.OhMyOpenCode.Agents)
+	cfg.OhMyOpenCode.Categories = maps.Clone(c.OhMyOpenCode.Categories)
+	return &cfg
 }
 
 func (c *WorkflowConfig) MaxConcurrency() int {
@@ -336,6 +367,34 @@ func (c *WorkflowConfig) OhMyOpenCodeProviderAPIKey() string {
 		return ""
 	}
 	return c.OhMyOpenCode.Provider.APIKey
+}
+
+func (c *WorkflowConfig) TeamMaxWorkers() int {
+	if c == nil || c.Team.MaxWorkers <= 0 {
+		return defaultTeamMaxWorkers
+	}
+	return c.Team.MaxWorkers
+}
+
+func (c *WorkflowConfig) TeamMaxFixLoops() int {
+	if c == nil || c.Team.MaxFixLoops <= 0 {
+		return defaultTeamMaxFixLoops
+	}
+	return c.Team.MaxFixLoops
+}
+
+func (c *WorkflowConfig) TeamClaimLeaseSeconds() int {
+	if c == nil || c.Team.ClaimLeaseSeconds <= 0 {
+		return defaultTeamClaimLeaseSeconds
+	}
+	return c.Team.ClaimLeaseSeconds
+}
+
+func (c *WorkflowConfig) TeamStateDir() string {
+	if c == nil || c.Team.StateDir == "" {
+		return defaultTeamStateDir
+	}
+	return c.Team.StateDir
 }
 
 func (c *WorkflowConfig) GitHubOwner() string {

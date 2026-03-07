@@ -189,11 +189,7 @@ func (o *Orchestrator) enqueueBackoffFromRunResult(ctx context.Context, issue ty
 	if releaseErr := o.tracker.ReleaseIssue(ctx, issue.ID); releaseErr != nil {
 		logging.LogIssueEvent(o.logger, issue.ID, "release_failed", "err", releaseErr)
 	} else {
-		o.emitEvent(OrchestratorEvent{
-			Type:    EventIssueReleased,
-			IssueID: issue.ID,
-			Data:    IssueReleased{Attempt: attempt.Attempt},
-		})
+		o.emitIssueReleased(issue.ID, attempt.Attempt, time.Now())
 	}
 
 	delayMs := CalculateBackoff(issue.ID, attempt.Attempt, o.currentConfig().MaxRetryBackoffMs())
@@ -246,12 +242,9 @@ func (o *Orchestrator) enqueueBackoffFromRunning(ctx context.Context, issue type
 func (o *Orchestrator) releaseClaimAndQueueContinuation(ctx context.Context, issueID string, attempt int, cause error) {
 	_ = o.tracker.UpdateIssueState(ctx, issueID, types.Released)
 	_ = o.tracker.ReleaseIssue(ctx, issueID)
+	releaseTimestamp := time.Now()
 	o.enqueueContinuation(issueID, attempt, cause.Error())
-	o.emitEvent(OrchestratorEvent{
-		Type:    EventIssueReleased,
-		IssueID: issueID,
-		Data:    IssueReleased{Attempt: attempt},
-	})
+	o.emitIssueReleased(issueID, attempt, releaseTimestamp)
 }
 
 func (o *Orchestrator) enqueueContinuation(issueID string, attempt int, message string) {
@@ -422,10 +415,15 @@ func (o *Orchestrator) releaseIssue(ctx context.Context, issueID string, from ty
 		return
 	}
 
+	o.emitIssueReleased(issueID, attempt, time.Now())
+}
+
+func (o *Orchestrator) emitIssueReleased(issueID string, attempt int, timestamp time.Time) {
 	o.emitEvent(OrchestratorEvent{
-		Type:    EventIssueReleased,
-		IssueID: issueID,
-		Data:    IssueReleased{Attempt: attempt},
+		Type:      EventIssueReleased,
+		IssueID:   issueID,
+		Data:      IssueReleased{Attempt: attempt},
+		Timestamp: timestamp,
 	})
 }
 
@@ -436,7 +434,7 @@ func (o *Orchestrator) emitStatusUpdate() {
 	o.mu.Unlock()
 	cfg := o.currentConfig()
 	modelName, _ := cfg.Model()
-	projectURL, _ := cfg.ProjectURL()
+	projectURL := cfg.TrackerProjectURL()
 	o.emitEvent(OrchestratorEvent{
 		Type: EventStatusUpdate,
 		Data: StatusUpdate{
