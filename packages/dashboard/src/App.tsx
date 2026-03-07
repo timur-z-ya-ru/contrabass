@@ -80,13 +80,13 @@ function App() {
         </div>
       ) : null}
 
-      <MetricCards stats={state.stats} backoffCount={state.backoff.length} />
+      <MetricCards stats={state.stats} backoffCount={(state.backoff ?? []).length} />
 
       <div className="dashboard__grid">
         <div className="dashboard__primary">
           <section className="dashboard__section">
             <h2 className="dashboard__section-label">Running Sessions</h2>
-            <SessionsTable entries={state.running} />
+            <SessionsTable entries={state.running ?? []} />
           </section>
 
           <section className="dashboard__section">
@@ -98,7 +98,7 @@ function App() {
         <aside className="dashboard__sidebar">
           <section className="dashboard__section">
             <h2 className="dashboard__section-label">Retry Queue</h2>
-            <RetryQueue entries={state.backoff} />
+            <RetryQueue entries={state.backoff ?? []} />
           </section>
 
           <section className="dashboard__section">
