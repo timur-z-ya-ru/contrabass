@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -71,6 +72,15 @@ var boardDispatchCmd = &cobra.Command{
 	RunE:  runBoardDispatch,
 }
 
+type boardDispatchOptions struct {
+	ConfigPath string
+	TeamName   string
+	MaxWorkers int
+	UntilEmpty bool
+}
+
+var runBoardDispatchTeam = runTeamWithOptions
+
 func init() {
 	for _, command := range []*cobra.Command{
 		boardInitCmd,
@@ -103,6 +113,7 @@ func init() {
 
 	boardDispatchCmd.Flags().String("team-name", "", "override the team name used for dispatch")
 	boardDispatchCmd.Flags().IntP("max-workers", "w", 0, "override max workers from config")
+	boardDispatchCmd.Flags().Bool("until-empty", false, "keep dispatching runnable issues until the internal board is drained")
 
 	boardCmd.AddCommand(
 		boardInitCmd,
@@ -371,37 +382,94 @@ func runBoardDispatch(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("getting max-workers flag: %w", err)
 	}
 
-	issue, found, err := localTracker.FindDispatchableIssue(context.Background(), strings.TrimSpace(teamName))
+	untilEmpty, err := cmd.Flags().GetBool("until-empty")
 	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("no dispatchable internal board issue found")
+		return fmt.Errorf("getting until-empty flag: %w", err)
 	}
 
-	resolvedTeamName := resolveTeamNameForIssue(issue, teamName)
-	if _, err := localTracker.AssignIssue(context.Background(), issue.ID, resolvedTeamName); err != nil {
-		return err
+	return dispatchBoardIssues(
+		context.Background(),
+		cmd.OutOrStdout(),
+		localTracker,
+		boardDispatchOptions{
+			ConfigPath: cfgPath,
+			TeamName:   strings.TrimSpace(teamName),
+			MaxWorkers: maxWorkers,
+			UntilEmpty: untilEmpty,
+		},
+		runBoardDispatchTeam,
+	)
+}
+
+func dispatchBoardIssues(
+	ctx context.Context,
+	out io.Writer,
+	localTracker *tracker.LocalTracker,
+	opts boardDispatchOptions,
+	runTeam func(teamRunOptions) error,
+) error {
+	dispatched := 0
+	for {
+		issueID, resolvedTeamName, found, err := dispatchNextBoardIssue(ctx, localTracker, opts, runTeam)
+		if err != nil {
+			return err
+		}
+		if !found {
+			if !opts.UntilEmpty {
+				return fmt.Errorf("no dispatchable internal board issue found")
+			}
+			if dispatched == 0 {
+				_, _ = fmt.Fprintln(out, "board already drained")
+				return nil
+			}
+			_, _ = fmt.Fprintf(out, "drained board after %d dispatches\n", dispatched)
+			return nil
+		}
+
+		dispatched++
+		_, _ = fmt.Fprintf(out, "dispatched %s to %s\n", issueID, resolvedTeamName)
+		if !opts.UntilEmpty {
+			return nil
+		}
+	}
+}
+
+func dispatchNextBoardIssue(
+	ctx context.Context,
+	localTracker *tracker.LocalTracker,
+	opts boardDispatchOptions,
+	runTeam func(teamRunOptions) error,
+) (string, string, bool, error) {
+	issue, found, err := localTracker.FindDispatchableIssue(ctx, opts.TeamName)
+	if err != nil {
+		return "", "", false, err
+	}
+	if !found {
+		return "", "", false, nil
+	}
+
+	resolvedTeamName := resolveTeamNameForIssue(issue, opts.TeamName)
+	if _, err := localTracker.AssignIssue(ctx, issue.ID, resolvedTeamName); err != nil {
+		return "", "", false, err
 	}
 	if err := localTracker.PostComment(
-		context.Background(),
+		ctx,
 		issue.ID,
 		fmt.Sprintf("dispatch requested for team %s", resolvedTeamName),
 	); err != nil {
-		return err
+		return "", "", false, err
 	}
 
-	if err := runTeamWithOptions(teamRunOptions{
-		ConfigPath: cfgPath,
+	if err := runTeam(teamRunOptions{
+		ConfigPath: opts.ConfigPath,
 		TeamName:   resolvedTeamName,
 		IssueID:    issue.ID,
-		MaxWorkers: maxWorkers,
+		MaxWorkers: opts.MaxWorkers,
 	}); err != nil {
-		return err
+		return "", "", false, fmt.Errorf("dispatching %s to %s: %w", issue.ID, resolvedTeamName, err)
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "dispatched %s to %s\n", issue.ID, resolvedTeamName)
-	return nil
+	return issue.ID, resolvedTeamName, true, nil
 }
 
 func loadLocalBoardTracker(cmd *cobra.Command, allowPrefixOverride bool) (*tracker.LocalTracker, error) {

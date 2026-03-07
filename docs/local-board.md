@@ -47,6 +47,7 @@ contrabass board move CB-1 in_progress
 contrabass board comment CB-1 --body "agent run started"
 contrabass board show CB-1
 contrabass board dispatch --config WORKFLOW.md --team-name team-alpha
+contrabass board dispatch --config WORKFLOW.md --until-empty
 contrabass team run --config WORKFLOW.md --issue CB-1
 ```
 
@@ -108,3 +109,15 @@ Dispatch rules:
 This lets the harness create and assign tickets on the internal board, then let
 Contrabass automatically pick the next ready ticket and execute it with the
 team runtime.
+
+Use `--until-empty` to keep draining the runnable queue until the board has no
+ready tickets left. This is useful when the AI planner has already created and
+assigned a batch of work and you want Contrabass to keep launching team runs
+until every currently-unblocked ticket has been consumed.
+
+Drain mode behavior:
+
+- prints one `dispatched <issue> to <team>` line per launched team run
+- exits successfully with `board already drained` when nothing is runnable
+- prints `drained board after N dispatches` after consuming the current queue
+- stops immediately if any dispatched team run returns an error
