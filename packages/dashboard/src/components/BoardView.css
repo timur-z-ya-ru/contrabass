@@ -1,23 +1,24 @@
 .board-view {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: var(--space-md);
 }
 
 .board-view__create {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
-  gap: 0.5rem;
+  gap: var(--space-sm);
 }
 
 .board-view__input {
   width: 100%;
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 0.86rem;
+  transition: outline-color var(--duration-fast) var(--ease-out-quart), border-color var(--duration-fast) var(--ease-out-quart);
 }
 
 .board-view__input::placeholder {
@@ -35,16 +36,23 @@
 
 .board-view__button {
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   color: var(--text-primary);
   padding: 0.42rem 0.66rem;
   font-size: 0.82rem;
   cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out-quart), border-color var(--duration-fast) var(--ease-out-quart);
 }
 
 .board-view__button:hover:enabled {
-  background: color-mix(in srgb, var(--accent-blue) 20%, var(--bg-tertiary));
+  background: var(--accent-blue-tint);
+  border-color: var(--accent-blue);
+}
+
+.board-view__button:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 
 .board-view__button:disabled {
@@ -82,7 +90,7 @@
   width: 100%;
   overflow-x: auto;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary);
 }
 
@@ -91,6 +99,7 @@
   min-width: 760px;
   border-collapse: collapse;
   font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .board-view__table th,
@@ -110,6 +119,7 @@
 
 .board-view__table tbody tr {
   background: var(--bg-secondary);
+  transition: background-color var(--duration-fast) var(--ease-out-quart);
 }
 
 .board-view__table tbody tr:hover {
@@ -134,10 +144,16 @@
   text-align: left;
   font-size: 0.86rem;
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-quart);
 }
 
 .board-view__title:hover {
   color: var(--accent-blue);
+}
+
+.board-view__title:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 
 .board-view__edit {
@@ -178,20 +194,20 @@
 
 .board-view__state-badge--open {
   color: var(--accent-blue);
-  border-color: color-mix(in srgb, var(--accent-blue) 50%, transparent);
-  background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
+  border-color: var(--accent-blue);
+  background: var(--accent-blue-tint);
 }
 
 .board-view__state-badge--in-progress {
   color: var(--accent-yellow);
-  border-color: color-mix(in srgb, var(--accent-yellow) 50%, transparent);
-  background: color-mix(in srgb, var(--accent-yellow) 18%, transparent);
+  border-color: var(--accent-yellow);
+  background: var(--accent-yellow-tint);
 }
 
 .board-view__state-badge--done {
   color: var(--accent-green);
-  border-color: color-mix(in srgb, var(--accent-green) 50%, transparent);
-  background: color-mix(in srgb, var(--accent-green) 18%, transparent);
+  border-color: var(--accent-green);
+  background: var(--accent-green-tint);
 }
 
 @media (max-width: 900px) {

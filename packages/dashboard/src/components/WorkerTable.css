@@ -2,7 +2,7 @@
   width: 100%;
   overflow-x: auto;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary);
 }
 
@@ -11,6 +11,7 @@
   min-width: 700px;
   border-collapse: collapse;
   font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .worker-table th,
@@ -29,6 +30,7 @@
 
 .worker-table tbody tr {
   background: var(--bg-secondary);
+  transition: background-color var(--duration-fast) var(--ease-out-quart);
 }
 
 .worker-table tbody tr:hover {
@@ -55,6 +57,7 @@
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  transition: color var(--duration-fast) var(--ease-out-quart);
 }
 
 .worker-table__status::before {

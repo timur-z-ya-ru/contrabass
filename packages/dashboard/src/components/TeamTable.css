@@ -24,7 +24,7 @@
   width: 100%;
   overflow-x: auto;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary);
 }
 
@@ -33,6 +33,7 @@
   min-width: 540px;
   border-collapse: collapse;
   font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .team-table th,
@@ -51,6 +52,7 @@
 
 .team-table tbody tr {
   background: var(--bg-secondary);
+  transition: background-color var(--duration-fast) var(--ease-out-quart);
 }
 
 .team-table tbody tr:hover {
@@ -76,6 +78,7 @@
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  transition: color var(--duration-fast) var(--ease-out-quart);
 }
 
 .team-table__phase-badge--plan {
