@@ -276,7 +276,10 @@ func (r *teamCLIRunner) Close() error {
 	for _, proc := range states {
 		proc.cancel()
 		proc.remove(r)
-		if err := r.shutdownTeam(context.Background(), proc.workspace, proc.teamName); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), r.startupTimeout)
+		err := r.shutdownTeam(shutdownCtx, proc.workspace, proc.teamName)
+		cancel()
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}

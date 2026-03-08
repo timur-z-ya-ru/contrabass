@@ -233,7 +233,7 @@ func newFakeTeamCLIServer(t *testing.T, logPath string) *fakeTeamCLIServer {
 	}))
 	state.httpServer = server
 
-	scriptPath := filepath.Join(t.TempDir(), "fake-omx.sh")
+	scriptPath := filepath.Join(t.TempDir(), "fake-omx.py")
 	script := fmt.Sprintf(`#!/usr/bin/env python3
 import json, os, sys, urllib.request
 base = %q

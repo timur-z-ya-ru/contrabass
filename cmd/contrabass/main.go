@@ -229,54 +229,10 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 	}
 	workspaceMgr := workspace.NewManager(repoPath)
 
-	// 8. Create agent runner
-	var agentRunner agent.AgentRunner
-	switch cfg.AgentType() {
-	case "codex":
-		codexBin := os.Getenv("CODEX_BINARY")
-		if codexBin == "" {
-			codexBin = cfg.CodexBinaryPath()
-		}
-		agentRunner = agent.NewCodexRunner(codexBin, 30*time.Second)
-	case "opencode":
-		opencodeBin := os.Getenv("OPENCODE_BINARY")
-		if opencodeBin == "" {
-			opencodeBin = cfg.OpenCodeBinaryPath()
-		}
-		port := cfg.OpenCodePort()
-		password := os.Getenv("OPENCODE_SERVER_PASSWORD")
-		if password == "" {
-			password = cfg.OpenCodePassword()
-		}
-		username := os.Getenv("OPENCODE_SERVER_USERNAME")
-		if username == "" {
-			username = cfg.OpenCodeUsername()
-		}
-		agentRunner = agent.NewOpenCodeRunner(opencodeBin, port, password, username, 30*time.Second)
-	case "omx":
-		omxBin := os.Getenv("OMX_BINARY")
-		if omxBin == "" {
-			omxBin = cfg.OMXBinaryPath()
-		}
-		omxCfg := cfg.Clone()
-		omxCfg.OMX.BinaryPath = omxBin
-		agentRunner = agent.NewOMXRunner(omxCfg, 30*time.Second)
-	case "omc":
-		omcBin := os.Getenv("OMC_BINARY")
-		if omcBin == "" {
-			omcBin = cfg.OMCBinaryPath()
-		}
-		omcCfg := cfg.Clone()
-		omcCfg.OMC.BinaryPath = omcBin
-		agentRunner = agent.NewOMCRunner(omcCfg, 30*time.Second)
-	case "oh-my-opencode":
-		var ohMyErr error
-		agentRunner, ohMyErr = agent.NewOhMyOpenCodeRunner(cfg, 30*time.Second)
-		if ohMyErr != nil {
-			return fmt.Errorf("creating oh-my-opencode runner: %w", ohMyErr)
-		}
-	default:
-		return fmt.Errorf("unknown agent type: %q (supported: codex, opencode, omx, omc, oh-my-opencode)", cfg.AgentType())
+	// 8. Create agent runner (reuses createRunner from team.go)
+	agentRunner, err := createRunner(cfg)
+	if err != nil {
+		return fmt.Errorf("creating agent runner: %w", err)
 	}
 
 	defer agentRunner.Close()
