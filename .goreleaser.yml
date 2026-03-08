@@ -42,7 +42,7 @@ release:
   header: |
     <div align="center">
 
-    [![Contrabass](https://github.com/junhoyeo/contrabass/raw/main/.github/assets/contrabass.png)](https://github.com/junhoyeo/contrabass)
+    [<img alt="Contrabass" width="320px" src="https://github.com/junhoyeo/contrabass/raw/main/.github/assets/contrabass.png" />](https://github.com/junhoyeo/contrabass)
 
     # `contrabass@{{ .Tag }}` is here!
 
