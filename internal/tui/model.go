@@ -44,6 +44,7 @@ type Model struct {
 	backoffs       map[string]BackoffRow
 	backoffRetryAt map[string]time.Time
 	teams          map[string]TeamRow
+	teamStartTime  map[string]time.Time
 	teamWorkers    map[string][]TeamWorkerRow
 	teamEvents     map[string]*EventLog
 	stats          HeaderData
@@ -88,6 +89,7 @@ func NewModel() Model {
 		backoffs:       make(map[string]BackoffRow),
 		backoffRetryAt: make(map[string]time.Time),
 		teams:          make(map[string]TeamRow),
+		teamStartTime:  make(map[string]time.Time),
 		teamWorkers:    make(map[string][]TeamWorkerRow),
 		teamEvents:     make(map[string]*EventLog),
 		startTime:      now,
@@ -551,6 +553,15 @@ func (m Model) refreshDerivedFields(now time.Time) Model {
 	}
 	m.agentRowsDirty = true
 
+	for teamName, row := range m.teams {
+		startedAt := m.teamStartTime[teamName]
+		if !startedAt.IsZero() && !isTerminalTeamPhase(row.Phase) {
+			row.Age = durationString(now.Sub(startedAt))
+			m.teams[teamName] = row
+		}
+	}
+	m.teamRowsDirty = true
+
 	for issueID, row := range m.backoffs {
 		retryAt := m.backoffRetryAt[issueID]
 		row.RetryIn = durationString(retryAt.Sub(now))
@@ -714,6 +725,7 @@ func (m Model) applyTeamEvent(event types.TeamEvent) Model {
 			m.teamSortDirty = true
 			m.teamEvents[event.TeamName] = NewEventLog(defaultEventLogSize)
 		}
+		m.teamStartTime[event.TeamName] = event.Timestamp
 		m.pushTeamEvent(event.TeamName, event.Timestamp, event.Type, fmt.Sprintf("workers=%d", maxWorkers))
 		m.teams[event.TeamName] = TeamRow{
 			TeamName:       event.TeamName,

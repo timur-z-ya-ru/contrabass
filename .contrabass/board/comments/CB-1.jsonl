@@ -1,12 +1,5 @@
-{"author":"junhoyeo","body":"dispatch requested for team issue-cb-1","created_at":"2026-03-08T05:41:08.776555Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 started execution","created_at":"2026-03-08T05:41:08.778284Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 entered phase team-plan","created_at":"2026-03-08T05:41:08.779894Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 ended with error: start agent: EOF","created_at":"2026-03-08T05:41:08.888115Z"}
-{"author":"junhoyeo","body":"dispatch requested for team issue-cb-1","created_at":"2026-03-08T05:46:16.467165Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 started execution","created_at":"2026-03-08T05:46:16.468748Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 entered phase team-plan","created_at":"2026-03-08T05:46:16.470762Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 ended with error: start agent: handshake timeout waiting for read after 29.99999975s","created_at":"2026-03-08T05:46:46.483616Z"}
-{"author":"junhoyeo","body":"dispatch requested for team issue-cb-1","created_at":"2026-03-08T05:48:10.011608Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 started execution","created_at":"2026-03-08T05:48:10.012947Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 entered phase team-plan","created_at":"2026-03-08T05:48:10.014408Z"}
-{"author":"team:issue-cb-1","body":"team issue-cb-1 ended with error: start agent: handshake timeout waiting for read after 29.999999666s","created_at":"2026-03-08T05:48:40.026664Z"}
+{"author":"junhoyeo","body":"dispatch requested for team issue-cb-1","created_at":"2026-03-08T06:16:44.741202Z"}
+{"author":"team:issue-cb-1","body":"team issue-cb-1 started execution","created_at":"2026-03-08T06:16:44.742595Z"}
+{"author":"team:issue-cb-1","body":"team issue-cb-1 entered phase team-plan","created_at":"2026-03-08T06:16:44.744478Z"}
+{"author":"team:issue-cb-1","body":"team issue-cb-1: coordinator claimed 001-cb-1-plan Plan CB-1 Add godoc comment to EventLog struct","created_at":"2026-03-08T06:16:44.745026Z"}
+{"author":"team:issue-cb-1","body":"team issue-cb-1 ended with error: context canceled","created_at":"2026-03-08T06:24:55.083378Z"}
