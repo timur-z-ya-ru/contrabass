@@ -155,7 +155,7 @@ func newTeamCLIRunner(cfg *teamCLIRunner) *teamCLIRunner {
 		cfg.logger = log.NewWithOptions(io.Discard, log.Options{})
 	}
 	cfg.procs = make(map[int]*teamCLIProcess)
-	return &cfg
+	return cfg
 }
 
 func (p *teamCLIProcess) finish(err error) {
