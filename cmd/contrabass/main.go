@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/cobra"
 
 	contrabass "github.com/junhoyeo/contrabass"
-	"github.com/junhoyeo/contrabass/internal/agent"
 	"github.com/junhoyeo/contrabass/internal/config"
 	"github.com/junhoyeo/contrabass/internal/hub"
 	"github.com/junhoyeo/contrabass/internal/logging"
