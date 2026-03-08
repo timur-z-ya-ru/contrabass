@@ -221,11 +221,14 @@ func (m Model) View() tea.View {
 
 func (m Model) cyclePanel() Model {
 	panels := m.availablePanels()
-	if len(panels) <= 1 {
+	if len(panels) == 0 {
 		return m
 	}
 	for i, p := range panels {
 		if p == m.focusedPanel {
+			if len(panels) == 1 {
+				return m
+			}
 			m.focusedPanel = panels[(i+1)%len(panels)]
 			return m
 		}

@@ -1,0 +1,18 @@
+{
+  "id": "CB-1",
+  "identifier": "CB-1",
+  "title": "Test navigation feature",
+  "description": "Verify TUI panel navigation works",
+  "state": "retry",
+  "assignee": "issue-cb-1",
+  "url": "local://CB-1",
+  "tracker_meta": {
+    "last_team_event": "run_error",
+    "last_team_event_at": "2026-03-08T05:48:40.026409Z",
+    "team_name": "issue-cb-1",
+    "team_phase": "team-plan",
+    "team_status": "retry"
+  },
+  "created_at": "2026-03-08T05:41:00.350115Z",
+  "updated_at": "2026-03-08T05:48:40.026409Z"
+}
