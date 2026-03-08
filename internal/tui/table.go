@@ -74,9 +74,12 @@ func (t Table) View() string {
 	for i, r := range t.rows {
 		tok := fmt.Sprintf("%s/%s", formatTokensShort(r.TokensIn), formatTokensShort(r.TokensOut))
 		sess := truncateSessionID(r.SessionID, 14)
-		_ = i
+		glyph := statusGlyph(r.Phase, t.spinnerView)
+		if t.focused && i == t.selected {
+			glyph = "▶"
+		}
 		rows = append(rows, []string{
-			statusGlyph(r.Phase, t.spinnerView),
+			glyph,
 			displayIssueID(r.IssueID),
 			compactStage(r.Stage),
 			fmt.Sprintf("%d", r.PID),
@@ -142,7 +145,13 @@ func (t Table) View() string {
 		tbl.Width(t.width - 2)
 	}
 
-	return lipgloss.NewStyle().PaddingLeft(2).Render(tbl.String())
+	title := "  AGENTS"
+	if t.focused {
+		title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42")).Render(title)
+	} else {
+		title = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240")).Render(title)
+	}
+	return title + "\n" + lipgloss.NewStyle().PaddingLeft(2).Render(tbl.String())
 }
 
 func isActivePhase(phase types.RunPhase) bool {

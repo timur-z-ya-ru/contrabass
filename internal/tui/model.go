@@ -565,6 +565,7 @@ func (m Model) syncTables() Model {
 	m.backoff = m.backoff.Update(m.sortedBackoffRows())
 	m.teamTable = m.teamTable.Update(m.sortedTeamRows(), m.teamWorkers, m.spinner.View())
 	m.teamTable = m.teamTable.SetFocused(m.focusedPanel == PanelTeam && m.viewMode == ViewOverview)
+	m.keys = m.keys.SetViewMode(m.viewMode)
 	m.detailView = m.detailView.SetWidth(m.width)
 
 	if m.viewMode == ViewDetail {

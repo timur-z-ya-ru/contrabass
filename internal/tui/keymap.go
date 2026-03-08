@@ -34,6 +34,7 @@ type KeyMap struct {
 	Enter    key.Binding
 	Back     key.Binding
 	Tab      key.Binding
+	viewMode ViewMode
 }
 
 func NewKeyMap() KeyMap {
@@ -85,7 +86,15 @@ func NewKeyMap() KeyMap {
 	}
 }
 
+func (k KeyMap) SetViewMode(vm ViewMode) KeyMap {
+	k.viewMode = vm
+	return k
+}
+
 func (k KeyMap) ShortHelp() []key.Binding {
+	if k.viewMode == ViewDetail {
+		return []key.Binding{k.Up, k.Down, k.Back, k.Help, k.Quit}
+	}
 	return []key.Binding{k.Up, k.Down, k.Enter, k.Tab, k.Help, k.Quit}
 }
 

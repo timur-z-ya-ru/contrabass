@@ -154,7 +154,7 @@ func (d DetailView) RenderTeam(row TeamRow, workers []TeamWorkerRow, events []Ev
 			ts := e.Timestamp.Format("15:04:05")
 			line := fmt.Sprintf("  %s  %s",
 				timeStyle.Render(ts),
-				valueStyle.Render(e.Type),
+				valueStyle.Render(compactTeamEvent(e.Type)),
 			)
 			if e.Detail != "" {
 				line += "  " + dimStyle.Render(e.Detail)
@@ -165,4 +165,28 @@ func (d DetailView) RenderTeam(row TeamRow, workers []TeamWorkerRow, events []Ev
 	}
 
 	return b.String()
+}
+
+func compactTeamEvent(event string) string {
+	switch event {
+	case "team_created":
+		return "created"
+	case "pipeline_started":
+		return "pipeline start"
+	case "pipeline_completed":
+		return "pipeline done"
+	case "phase_started":
+		return "phase start"
+	case "task_claimed":
+		return "task claimed"
+	case "task_completed":
+		return "task done"
+	case "task_failed":
+		return "task failed"
+	default:
+		if len(event) > 20 {
+			return event[:17] + "..."
+		}
+		return event
+	}
 }

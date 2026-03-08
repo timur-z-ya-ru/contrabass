@@ -90,8 +90,10 @@ func (t TeamTable) buildRows() ([][]string, map[int]int) {
 	teamRowIndex := make(map[int]int, len(t.teams))
 
 	for teamIdx, team := range t.teams {
-		// Team summary row
 		glyph := teamStatusGlyph(team.Phase, t.spinner)
+		if t.focused && teamIdx == t.selected {
+			glyph = "▶"
+		}
 		tasksStr := fmt.Sprintf("%d/%d", team.CompletedTasks, team.Tasks)
 		if team.FailedTasks > 0 {
 			tasksStr = fmt.Sprintf("%d/%d (%d!)", team.CompletedTasks, team.Tasks, team.FailedTasks)
@@ -216,7 +218,13 @@ func (t TeamTable) View() string {
 		tbl.Width(t.width - 2)
 	}
 
-	return lipgloss.NewStyle().PaddingLeft(2).Render(tbl.String())
+	title := "  TEAMS"
+	if t.focused {
+		title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42")).Render(title)
+	} else {
+		title = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240")).Render(title)
+	}
+	return title + "\n" + lipgloss.NewStyle().PaddingLeft(2).Render(tbl.String())
 }
 
 func compactTeamPhase(phase string) string {
