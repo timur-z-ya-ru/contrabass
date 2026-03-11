@@ -16,6 +16,7 @@ import (
 	"github.com/junhoyeo/contrabass/internal/agent"
 	"github.com/junhoyeo/contrabass/internal/config"
 	"github.com/junhoyeo/contrabass/internal/team"
+	"github.com/junhoyeo/contrabass/internal/tmux"
 	"github.com/junhoyeo/contrabass/internal/tracker"
 	"github.com/junhoyeo/contrabass/internal/types"
 	"github.com/junhoyeo/contrabass/internal/workspace"
@@ -51,6 +52,7 @@ type teamRunOptions struct {
 	TasksPath  string
 	IssueID    string
 	MaxWorkers int
+	WorkerMode string
 }
 
 type teamRunHooks struct {
@@ -66,6 +68,7 @@ func init() {
 	teamRunCmd.Flags().StringP("tasks", "t", "", "path to tasks JSON file (required unless --issue is set)")
 	teamRunCmd.Flags().String("issue", "", "internal board issue ID to hydrate into a team run")
 	teamRunCmd.Flags().IntP("max-workers", "w", 0, "override max workers from config")
+	teamRunCmd.Flags().String("worker-mode", "", "override worker mode from config (goroutine|tmux)")
 
 	_ = teamRunCmd.MarkFlagRequired("config")
 
@@ -108,7 +111,35 @@ func logTeamEvents(ctx context.Context, logger *slog.Logger, events <-chan types
 }
 
 // createRunner creates an AgentRunner based on the workflow config.
-func createRunner(cfg *config.WorkflowConfig) (agent.AgentRunner, error) {
+func createRunner(cfg *config.WorkflowConfig, teamName string, logger *slog.Logger) (agent.AgentRunner, error) {
+	if cfg.WorkerMode() == "tmux" {
+		if !tmux.IsTmuxAvailable(context.Background(), nil) {
+			return nil, errors.New("tmux worker mode requested, but tmux is not available in PATH")
+		}
+
+		session := tmux.NewSession(teamName, nil)
+		registry := tmux.NewCLIRegistry()
+
+		paths := team.NewPaths(cfg.TeamStateDir())
+		store := team.NewStore(paths)
+		heartbeat := team.NewHeartbeatMonitor(store, paths, time.Duration(cfg.TeamClaimLeaseSeconds())*time.Second)
+		eventLogger := team.NewEventLogger(paths)
+		dispatchQueue := team.NewDispatchQueue(store, paths, time.Duration(cfg.TeamClaimLeaseSeconds())*time.Second)
+
+		return agent.NewTmuxRunner(agent.TmuxRunnerConfig{
+			TeamName:         teamName,
+			AgentType:        cfg.AgentType(),
+			BinaryPath:       binaryPathForAgent(cfg),
+			Session:          session,
+			Registry:         registry,
+			HeartbeatMonitor: heartbeat,
+			EventLogger:      eventLogger,
+			DispatchQueue:    dispatchQueue,
+			PollInterval:     2 * time.Second,
+			Logger:           logger,
+		}), nil
+	}
+
 	switch cfg.AgentType() {
 	case "codex":
 		codexBin := os.Getenv("CODEX_BINARY")
@@ -154,6 +185,38 @@ func createRunner(cfg *config.WorkflowConfig) (agent.AgentRunner, error) {
 	}
 }
 
+func binaryPathForAgent(cfg *config.WorkflowConfig) string {
+	switch cfg.AgentType() {
+	case "codex":
+		if codexBin := os.Getenv("CODEX_BINARY"); codexBin != "" {
+			return codexBin
+		}
+		return cfg.CodexBinaryPath()
+	case "opencode":
+		if opencodeBin := os.Getenv("OPENCODE_BINARY"); opencodeBin != "" {
+			return opencodeBin
+		}
+		return cfg.OpenCodeBinaryPath()
+	case "omx":
+		if omxBin := os.Getenv("OMX_BINARY"); omxBin != "" {
+			return omxBin
+		}
+		return cfg.OMXBinaryPath()
+	case "omc":
+		if omcBin := os.Getenv("OMC_BINARY"); omcBin != "" {
+			return omcBin
+		}
+		return cfg.OMCBinaryPath()
+	case "oh-my-opencode":
+		if ohMyOpenCodeBin := os.Getenv("OH_MY_OPENCODE_BINARY"); ohMyOpenCodeBin != "" {
+			return ohMyOpenCodeBin
+		}
+		return "oh-my-opencode"
+	default:
+		return ""
+	}
+}
+
 // runTeam executes the team run subcommand.
 func runTeam(cmd *cobra.Command, args []string) error {
 	cfgPath, err := cmd.Flags().GetString("config")
@@ -181,12 +244,18 @@ func runTeam(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting max-workers flag: %w", err)
 	}
 
+	workerMode, err := cmd.Flags().GetString("worker-mode")
+	if err != nil {
+		return fmt.Errorf("getting worker-mode flag: %w", err)
+	}
+
 	return runTeamWithOptions(teamRunOptions{
 		ConfigPath: cfgPath,
 		TeamName:   teamName,
 		TasksPath:  tasksPath,
 		IssueID:    issueID,
 		MaxWorkers: maxWorkers,
+		WorkerMode: workerMode,
 	})
 }
 
@@ -210,19 +279,9 @@ func runTeamWithHooks(opts teamRunOptions, hooks teamRunHooks) error {
 		return fmt.Errorf("parsing workflow config: %w", err)
 	}
 
-	// 2. Create workspace manager
-	repoPath, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+	if opts.WorkerMode != "" {
+		cfg.Team.WorkerMode = opts.WorkerMode
 	}
-	workspaceMgr := workspace.NewManager(repoPath)
-
-	// 3. Create agent runner
-	runner, err := createRunner(cfg)
-	if err != nil {
-		return fmt.Errorf("creating agent runner: %w", err)
-	}
-	defer runner.Close()
 
 	var tasks []types.TeamTask
 	var boardSyncer *boardIssueSyncer
@@ -270,10 +329,21 @@ func runTeamWithHooks(opts teamRunOptions, hooks teamRunHooks) error {
 		}
 	}
 
-	// 5. Create logger
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
+
+	repoPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+	workspaceMgr := workspace.NewManager(repoPath)
+
+	runner, err := createRunner(cfg, teamName, logger)
+	if err != nil {
+		return fmt.Errorf("creating agent runner: %w", err)
+	}
+	defer runner.Close()
 
 	// 6. Create coordinator
 	coordinator := team.NewCoordinator(teamName, cfg, runner, workspaceMgr, logger)

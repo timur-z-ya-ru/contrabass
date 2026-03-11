@@ -229,7 +229,7 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 	workspaceMgr := workspace.NewManager(repoPath)
 
 	// 8. Create agent runner (reuses createRunner from team.go)
-	agentRunner, err := createRunner(cfg)
+	agentRunner, err := createRunner(cfg, "orchestrator", nil)
 	if err != nil {
 		return fmt.Errorf("creating agent runner: %w", err)
 	}

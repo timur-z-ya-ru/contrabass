@@ -42,6 +42,7 @@ const (
 	defaultTeamClaimLeaseSeconds = 300
 	defaultTeamStateDir          = ".contrabass/state/team"
 	defaultTeamExecutionMode     = TeamExecutionModeTeam
+	defaultTeamWorkerMode        = "goroutine"
 )
 
 const (
@@ -150,6 +151,7 @@ type TeamSectionConfig struct {
 	ClaimLeaseSeconds int    `yaml:"claim_lease_seconds"`
 	StateDir          string `yaml:"state_dir"`
 	ExecutionMode     string `yaml:"execution_mode"`
+	WorkerMode        string `yaml:"worker_mode"`
 }
 
 // OhMyOpenCodeConfig holds settings for the oh-my-opencode agent runner which
@@ -519,6 +521,24 @@ func (c *WorkflowConfig) TeamExecutionMode() string {
 		return TeamExecutionModeTeam
 	default:
 		return strings.TrimSpace(strings.ToLower(c.Team.ExecutionMode))
+	}
+}
+
+func (c *WorkflowConfig) WorkerMode() string {
+	if c == nil {
+		return defaultTeamWorkerMode
+	}
+
+	mode := strings.TrimSpace(strings.ToLower(c.Team.WorkerMode))
+	if mode == "" {
+		return defaultTeamWorkerMode
+	}
+
+	switch mode {
+	case "tmux":
+		return "tmux"
+	default:
+		return defaultTeamWorkerMode
 	}
 }
 

@@ -169,6 +169,7 @@ func TestWorkflowConfig_NewSectionDefaults(t *testing.T) {
 	assert.Equal(t, defaultSandbox, nilCfg.CodexSandbox())
 	assert.Equal(t, defaultTeamStateDir, nilCfg.TeamStateDir())
 	assert.Equal(t, defaultTeamExecutionMode, nilCfg.TeamExecutionMode())
+	assert.Equal(t, defaultTeamWorkerMode, nilCfg.WorkerMode())
 
 	cfg := &WorkflowConfig{}
 	assert.Equal(t, defaultTrackerType, cfg.TrackerType())
@@ -183,6 +184,7 @@ func TestWorkflowConfig_NewSectionDefaults(t *testing.T) {
 	assert.Equal(t, defaultSandbox, cfg.CodexSandbox())
 	assert.Equal(t, defaultTeamStateDir, cfg.TeamStateDir())
 	assert.Equal(t, defaultTeamExecutionMode, cfg.TeamExecutionMode())
+	assert.Equal(t, defaultTeamWorkerMode, cfg.WorkerMode())
 
 	legacyCfg := &WorkflowConfig{
 		ModelRaw:      "openai/gpt-5-codex",
@@ -190,6 +192,56 @@ func TestWorkflowConfig_NewSectionDefaults(t *testing.T) {
 	}
 	assert.Equal(t, "openai/gpt-5-codex", legacyCfg.CodexModel())
 	assert.Equal(t, "https://linear.app/example/project/legacy", legacyCfg.TrackerProjectURL())
+}
+
+func TestWorkflowConfig_WorkerMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  *WorkflowConfig
+		want string
+	}{
+		{
+			name: "nil config defaults to goroutine",
+			cfg:  nil,
+			want: defaultTeamWorkerMode,
+		},
+		{
+			name: "empty config defaults to goroutine",
+			cfg:  &WorkflowConfig{},
+			want: defaultTeamWorkerMode,
+		},
+		{
+			name: "explicit tmux mode is preserved",
+			cfg: &WorkflowConfig{
+				Team: TeamSectionConfig{WorkerMode: "tmux"},
+			},
+			want: "tmux",
+		},
+		{
+			name: "mode is normalized",
+			cfg: &WorkflowConfig{
+				Team: TeamSectionConfig{WorkerMode: " TMUX "},
+			},
+			want: "tmux",
+		},
+		{
+			name: "unknown mode falls back to goroutine",
+			cfg: &WorkflowConfig{
+				Team: TeamSectionConfig{WorkerMode: "custom"},
+			},
+			want: defaultTeamWorkerMode,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.cfg.WorkerMode())
+		})
+	}
 }
 
 func TestWorkflowConfig_TeamExecutionMode(t *testing.T) {
