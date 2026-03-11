@@ -112,6 +112,10 @@ func logTeamEvents(ctx context.Context, logger *slog.Logger, events <-chan types
 
 // createRunner creates an AgentRunner based on the workflow config.
 func createRunner(cfg *config.WorkflowConfig, teamName string, logger *slog.Logger) (agent.AgentRunner, error) {
+	if err := cfg.ValidateWorkerMode(); err != nil {
+		return nil, fmt.Errorf("invalid worker mode configuration: %w", err)
+	}
+
 	if cfg.WorkerMode() == "tmux" {
 		if !tmux.IsTmuxAvailable(context.Background(), nil) {
 			return nil, errors.New("tmux worker mode requested, but tmux is not available in PATH")

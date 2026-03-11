@@ -223,33 +223,46 @@ func TestCoordinatorGoroutineModeRegression_RunPipeline(t *testing.T) {
 
 func TestConfigWorkerModeDefaultsToGoroutine(t *testing.T) {
 	tests := []struct {
-		name string
-		cfg  *config.WorkflowConfig
-		want string
+		name    string
+		cfg     *config.WorkflowConfig
+		want    string
+		wantErr bool
 	}{
 		{
-			name: "nil config defaults to goroutine",
-			cfg:  nil,
-			want: "goroutine",
+			name:    "nil config defaults to goroutine",
+			cfg:     nil,
+			want:    "goroutine",
+			wantErr: false,
 		},
 		{
-			name: "empty worker mode defaults to goroutine",
-			cfg:  &config.WorkflowConfig{},
-			want: "goroutine",
+			name:    "empty worker mode defaults to goroutine",
+			cfg:     &config.WorkflowConfig{},
+			want:    "goroutine",
+			wantErr: false,
 		},
 		{
-			name: "unknown worker mode falls back to goroutine",
+			name: "unknown worker mode returns error",
 			cfg: &config.WorkflowConfig{Team: config.TeamSectionConfig{
 				WorkerMode: "invalid-mode",
 			}},
-			want: "goroutine",
+			want:    "",
+			wantErr: true,
 		},
 		{
 			name: "tmux mode remains tmux",
 			cfg: &config.WorkflowConfig{Team: config.TeamSectionConfig{
 				WorkerMode: "tmux",
 			}},
-			want: "tmux",
+			want:    "tmux",
+			wantErr: false,
+		},
+		{
+			name: "goroutine mode is valid",
+			cfg: &config.WorkflowConfig{Team: config.TeamSectionConfig{
+				WorkerMode: "goroutine",
+			}},
+			want:    "goroutine",
+			wantErr: false,
 		},
 	}
 
@@ -257,8 +270,20 @@ func TestConfigWorkerModeDefaultsToGoroutine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.cfg == nil {
 				assert.Equal(t, tc.want, (*config.WorkflowConfig)(nil).WorkerMode())
+				assert.NoError(t, (*config.WorkflowConfig)(nil).ValidateWorkerMode())
 				return
 			}
+
+			// Test ValidateWorkerMode() validation first
+			err := tc.cfg.ValidateWorkerMode()
+			if tc.wantErr {
+				assert.Error(t, err, "expected validation error for mode %q", tc.cfg.Team.WorkerMode)
+				// When validation fails, don't check the getter value
+				return
+			}
+			assert.NoError(t, err, "expected no validation error for mode %q", tc.cfg.Team.WorkerMode)
+
+			// Test WorkerMode() getter (always returns a valid default)
 			assert.Equal(t, tc.want, tc.cfg.WorkerMode())
 		})
 	}

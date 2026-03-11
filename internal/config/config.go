@@ -542,6 +542,29 @@ func (c *WorkflowConfig) WorkerMode() string {
 	}
 }
 
+// ValidateWorkerMode checks if the worker mode is valid.
+// Empty values are allowed (they default to "goroutine").
+// Valid modes are "goroutine" and "tmux".
+// Returns an error for unknown values.
+func (c *WorkflowConfig) ValidateWorkerMode() error {
+	if c == nil {
+		return nil
+	}
+
+	mode := strings.TrimSpace(strings.ToLower(c.Team.WorkerMode))
+	if mode == "" {
+		// Empty is fine, defaults to goroutine
+		return nil
+	}
+
+	switch mode {
+	case "goroutine", "tmux":
+		return nil
+	default:
+		return errors.New("unknown worker_mode: " + c.Team.WorkerMode + " (valid values: goroutine, tmux)")
+	}
+}
+
 func (c *WorkflowConfig) GitHubOwner() string {
 	if c == nil {
 		return ""
