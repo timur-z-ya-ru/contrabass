@@ -138,6 +138,51 @@ func TestRecovery_DiagnoseAndRecover(t *testing.T) {
 			},
 		},
 		{
+			name: "stale pending dispatch entries are cleaned",
+			setup: func(t *testing.T, store *Store, paths *Paths, heartbeats *HeartbeatMonitor, _ *TaskRegistry, dispatch *DispatchQueue) {
+				teamName := "team-a"
+				require.NoError(t, store.EnsureDirs(teamName))
+
+				require.NoError(t, heartbeats.Write(teamName, Heartbeat{WorkerID: "worker-alive", Status: "working", Timestamp: time.Now()}))
+				require.NoError(t, heartbeats.Write(teamName, Heartbeat{WorkerID: "worker-dead", Status: "working", Timestamp: time.Now()}))
+
+				staleMTime := time.Now().Add(-2 * time.Minute)
+				require.NoError(t, os.Chtimes(paths.HeartbeatPath(teamName, "worker-dead"), staleMTime, staleMTime))
+
+				require.NoError(t, dispatch.Dispatch(teamName, DispatchEntry{
+					TaskID:       "task-old",
+					WorkerID:     "worker-alive",
+					Prompt:       "old dispatch",
+					DispatchedAt: time.Now().Add(-2 * time.Minute),
+				}))
+				require.NoError(t, dispatch.Dispatch(teamName, DispatchEntry{
+					TaskID:       "task-stale-worker",
+					WorkerID:     "worker-dead",
+					Prompt:       "stale worker dispatch",
+					DispatchedAt: time.Now(),
+				}))
+				require.NoError(t, dispatch.Dispatch(teamName, DispatchEntry{
+					TaskID:       "task-fresh",
+					WorkerID:     "worker-alive",
+					Prompt:       "fresh dispatch",
+					DispatchedAt: time.Now(),
+				}))
+			},
+			assertion: func(t *testing.T, report *DiagnosisReport, _ *Store, paths *Paths, _ *HeartbeatMonitor, _ *TaskRegistry, _ *DispatchQueue) {
+				teamName := "team-a"
+				require.Len(t, report.PendingDispatch, 3)
+
+				_, err := os.Stat(paths.DispatchPath(teamName, "task-old"))
+				assert.True(t, os.IsNotExist(err))
+
+				_, err = os.Stat(paths.DispatchPath(teamName, "task-stale-worker"))
+				assert.True(t, os.IsNotExist(err))
+
+				_, err = os.Stat(paths.DispatchPath(teamName, "task-fresh"))
+				require.NoError(t, err)
+			},
+		},
+		{
 			name: "missing state files handled gracefully",
 			setup: func(t *testing.T, _ *Store, _ *Paths, _ *HeartbeatMonitor, _ *TaskRegistry, _ *DispatchQueue) {
 			},

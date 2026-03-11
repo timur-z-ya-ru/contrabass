@@ -16,6 +16,11 @@ import (
 	"github.com/junhoyeo/contrabass/internal/workspace"
 )
 
+const (
+	governanceRetryLimit = 10
+	governanceRetryDelay = 500 * time.Millisecond
+)
+
 // Coordinator manages a team of workers executing a staged pipeline.
 type Coordinator struct {
 	teamName   string
@@ -371,6 +376,7 @@ func (c *Coordinator) runFixPhase(ctx context.Context) error {
 
 func (c *Coordinator) workerLoop(ctx context.Context, workerID string) error {
 	c.logger.Info("worker started", "worker", workerID, "team", c.teamName)
+	governanceRetries := 0
 
 	for {
 		select {
@@ -387,13 +393,27 @@ func (c *Coordinator) workerLoop(ctx context.Context, workerID string) error {
 			WorkerActiveTasks: activeCount,
 			ActiveWorkerCount: activeWorkerCount,
 		}); err != nil {
+			governanceRetries++
+			if governanceRetries >= governanceRetryLimit {
+				c.logger.Warn(
+					"worker exiting after governance retries exhausted",
+					"team", c.teamName,
+					"worker", workerID,
+					"retries", governanceRetries,
+					"error", err,
+				)
+				return nil
+			}
+
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(governanceRetryDelay):
 			}
 			continue
 		}
+
+		governanceRetries = 0
 
 		task, token, err := c.tasks.ClaimNextTask(c.teamName, workerID)
 		if err != nil {

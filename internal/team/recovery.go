@@ -156,11 +156,45 @@ func (r *Recovery) Recover(ctx context.Context, teamName string) error {
 		r.logger.Info("cleaned stale heartbeat", "team", teamName, "worker", hb.WorkerID)
 	}
 
+	staleWorkers := make(map[string]struct{}, len(report.StaleWorkers))
+	for _, hb := range report.StaleWorkers {
+		staleWorkers[hb.WorkerID] = struct{}{}
+	}
+
+	cleanedPendingDispatch := 0
+	for _, entry := range report.PendingDispatch {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		staleByAge := r.heartbeats.staleThreshold > 0 && now.Sub(entry.DispatchedAt) > r.heartbeats.staleThreshold
+		_, staleWorker := staleWorkers[entry.WorkerID]
+		if !staleByAge && !staleWorker {
+			continue
+		}
+
+		path := r.paths.DispatchPath(teamName, entry.TaskID)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("recover: remove stale pending dispatch for task %s: %w", entry.TaskID, err)
+		}
+
+		cleanedPendingDispatch++
+		r.logger.Info(
+			"cleaned stale pending dispatch",
+			"team", teamName,
+			"task", entry.TaskID,
+			"worker", entry.WorkerID,
+			"stale_by_age", staleByAge,
+			"stale_worker", staleWorker,
+		)
+	}
+
 	r.logger.Info(
 		"recovery completed",
 		"team", teamName,
 		"released_orphaned_tasks", releasedTasks,
 		"cleaned_stale_heartbeats", cleanedHeartbeats,
+		"cleaned_stale_pending_dispatch", cleanedPendingDispatch,
 	)
 
 	return nil

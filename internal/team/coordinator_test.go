@@ -15,6 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type alwaysRejectPolicyRule struct{}
+
+func (alwaysRejectPolicyRule) Name() string {
+	return "always_reject"
+}
+
+func (alwaysRejectPolicyRule) Check(_ context.Context, _ Decision) error {
+	return errors.New("rejected")
+}
+
 func TestUpdatePhaseStateSerializesCallbacks(t *testing.T) {
 	store, _ := setupTestStore(t)
 
@@ -209,4 +219,45 @@ func TestWorkerLoopGovernanceBlocksClaimWhenMaxActiveExceeded(t *testing.T) {
 	require.NoError(t, getErr)
 	assert.Equal(t, types.TaskPending, stored.Status)
 	assert.Nil(t, stored.Claim)
+}
+
+func TestWorkerLoopExitsAfterGovernanceRetryLimit(t *testing.T) {
+	cfg := &config.WorkflowConfig{
+		Agent: config.AgentConfig{Type: "codex"},
+		Team: config.TeamSectionConfig{
+			MaxWorkers:        1,
+			MaxFixLoops:       2,
+			ClaimLeaseSeconds: 60,
+			StateDir:          t.TempDir(),
+		},
+	}
+
+	coordinator := NewCoordinator(
+		"test-team",
+		cfg,
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	require.NoError(t, coordinator.Initialize(types.TeamConfig{
+		MaxWorkers:        cfg.TeamMaxWorkers(),
+		MaxFixLoops:       cfg.TeamMaxFixLoops(),
+		ClaimLeaseSeconds: cfg.TeamClaimLeaseSeconds(),
+		StateDir:          cfg.TeamStateDir(),
+		AgentType:         cfg.AgentType(),
+	}))
+
+	coordinator.governance = NewGovernancePolicy(alwaysRejectPolicyRule{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := coordinator.workerLoop(ctx, "worker-1")
+	elapsed := time.Since(start)
+
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, elapsed, governanceRetryDelay*time.Duration(governanceRetryLimit-1))
+	assert.Equal(t, 10, governanceRetryLimit)
 }
