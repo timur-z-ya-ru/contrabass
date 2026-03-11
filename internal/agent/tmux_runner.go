@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/junhoyeo/contrabass/internal/ipc"
 	"github.com/junhoyeo/contrabass/internal/tmux"
 	"github.com/junhoyeo/contrabass/internal/types"
 )
@@ -28,9 +27,9 @@ type TmuxRunnerConfig struct {
 	BinaryPath       string
 	Session          *tmux.Session
 	Registry         *tmux.CLIRegistry
-	HeartbeatMonitor any
-	EventLogger      any
-	DispatchQueue    any
+	HeartbeatMonitor ipc.HeartbeatWriter
+	EventLogger      ipc.EventWriter
+	DispatchQueue    ipc.Dispatcher
 	PollInterval     time.Duration
 	Logger           *slog.Logger
 }
@@ -41,9 +40,9 @@ type TmuxRunner struct {
 	binaryPath       string
 	session          *tmux.Session
 	registry         *tmux.CLIRegistry
-	heartbeatMonitor any
-	eventLogger      any
-	dispatchQueue    any
+	heartbeatMonitor ipc.HeartbeatWriter
+	eventLogger      ipc.EventWriter
+	dispatchQueue    ipc.Dispatcher
 	pollInterval     time.Duration
 	logger           *slog.Logger
 
@@ -168,7 +167,12 @@ func (r *TmuxRunner) Start(ctx context.Context, issue types.Issue, workspace str
 	}
 
 	if r.dispatchQueue != nil {
-		if dispatchErr := callDispatch(r.dispatchQueue, r.teamName, taskID, workerID, strings.TrimSpace(prompt)); dispatchErr != nil {
+		if dispatchErr := r.dispatchQueue.Dispatch(r.teamName, ipc.DispatchEntry{
+			TaskID:       taskID,
+			WorkerID:     workerID,
+			Prompt:       strings.TrimSpace(prompt),
+			DispatchedAt: time.Now(),
+		}); dispatchErr != nil {
 			r.logger.Warn("tmux dispatch write failed", "team", r.teamName, "task_id", taskID, "error", dispatchErr)
 		}
 	}
@@ -272,20 +276,32 @@ func (r *TmuxRunner) monitorProcess(ctx context.Context, bootstrap *tmux.WorkerB
 		}
 
 		if r.heartbeatMonitor != nil {
-			if hbErr := callHeartbeatWrite(r.heartbeatMonitor, r.teamName, proc.workerID, proc.pid, proc.taskID, status, now); hbErr != nil {
+			if hbErr := r.heartbeatMonitor.Write(r.teamName, ipc.Heartbeat{
+				WorkerID:    proc.workerID,
+				PID:         proc.pid,
+				CurrentTask: proc.taskID,
+				Status:      status,
+				Timestamp:   now,
+			}); hbErr != nil {
 				r.logger.Warn("tmux heartbeat write failed", "team", r.teamName, "worker_id", proc.workerID, "error", hbErr)
 			}
 		}
 
 		if logStarted {
 			if r.eventLogger != nil {
-				if logErr := callEventLog(r.eventLogger, r.teamName, "worker_started", proc.workerID, proc.taskID, map[string]interface{}{"pane_id": proc.paneID}, now); logErr != nil {
+				if logErr := r.eventLogger.Log(r.teamName, ipc.Event{
+					Type:      "worker_started",
+					WorkerID:  proc.workerID,
+					TaskID:    proc.taskID,
+					Data:      map[string]interface{}{"pane_id": proc.paneID},
+					Timestamp: now,
+				}); logErr != nil {
 					r.logger.Warn("tmux worker_started log failed", "team", r.teamName, "worker_id", proc.workerID, "error", logErr)
 				}
 			}
 
 			if r.dispatchQueue != nil {
-				if ackErr := callDispatchAck(r.dispatchQueue, r.teamName, proc.taskID, proc.workerID); ackErr != nil {
+				if ackErr := r.dispatchQueue.Ack(r.teamName, proc.taskID, proc.workerID); ackErr != nil {
 					r.logger.Warn("tmux dispatch ack failed", "team", r.teamName, "task_id", proc.taskID, "worker_id", proc.workerID, "error", ackErr)
 				}
 			}
@@ -296,12 +312,18 @@ func (r *TmuxRunner) monitorProcess(ctx context.Context, bootstrap *tmux.WorkerB
 		}
 		if !alive {
 			if r.eventLogger != nil {
-				if logErr := callEventLog(r.eventLogger, r.teamName, "worker_stopped", proc.workerID, proc.taskID, map[string]interface{}{"pane_id": proc.paneID}, now); logErr != nil {
+				if logErr := r.eventLogger.Log(r.teamName, ipc.Event{
+					Type:      "worker_stopped",
+					WorkerID:  proc.workerID,
+					TaskID:    proc.taskID,
+					Data:      map[string]interface{}{"pane_id": proc.paneID},
+					Timestamp: now,
+				}); logErr != nil {
 					r.logger.Warn("tmux worker_stopped log failed", "team", r.teamName, "worker_id", proc.workerID, "error", logErr)
 				}
 			}
 			if r.dispatchQueue != nil {
-				if completeErr := callDispatchComplete(r.dispatchQueue, r.teamName, proc.taskID); completeErr != nil {
+				if completeErr := r.dispatchQueue.Complete(r.teamName, proc.taskID); completeErr != nil {
 					r.logger.Warn("tmux dispatch complete failed", "team", r.teamName, "task_id", proc.taskID, "error", completeErr)
 				}
 			}
@@ -370,158 +392,4 @@ func (r *TmuxRunner) monitorProcess(ctx context.Context, bootstrap *tmux.WorkerB
 			}
 		}
 	}
-}
-
-func callHeartbeatWrite(monitor any, teamName, workerID string, pid int, taskID, status string, timestamp time.Time) error {
-	if monitor == nil {
-		return nil
-	}
-
-	method := reflect.ValueOf(monitor).MethodByName("Write")
-	if !method.IsValid() {
-		return errors.New("heartbeat monitor does not implement Write")
-	}
-	if method.Type().NumIn() != 2 {
-		return errors.New("heartbeat monitor Write signature is invalid")
-	}
-
-	hb := reflect.New(method.Type().In(1)).Elem()
-	setStructField(hb, "WorkerID", workerID)
-	setStructField(hb, "PID", pid)
-	setStructField(hb, "CurrentTask", taskID)
-	setStructField(hb, "Status", status)
-	setStructField(hb, "Timestamp", timestamp)
-
-	results := method.Call([]reflect.Value{reflect.ValueOf(teamName), hb})
-	if len(results) == 1 && !results[0].IsNil() {
-		return results[0].Interface().(error)
-	}
-
-	return nil
-}
-
-func callEventLog(logger any, teamName, eventType, workerID, taskID string, data map[string]interface{}, timestamp time.Time) error {
-	if logger == nil {
-		return nil
-	}
-
-	method := reflect.ValueOf(logger).MethodByName("Log")
-	if !method.IsValid() {
-		return errors.New("event logger does not implement Log")
-	}
-	if method.Type().NumIn() != 2 {
-		return errors.New("event logger Log signature is invalid")
-	}
-
-	event := reflect.New(method.Type().In(1)).Elem()
-	setStructField(event, "Type", eventType)
-	setStructField(event, "WorkerID", workerID)
-	setStructField(event, "TaskID", taskID)
-	setStructField(event, "Data", data)
-	setStructField(event, "Timestamp", timestamp)
-
-	results := method.Call([]reflect.Value{reflect.ValueOf(teamName), event})
-	if len(results) == 1 && !results[0].IsNil() {
-		return results[0].Interface().(error)
-	}
-
-	return nil
-}
-
-func callDispatch(dispatchQueue any, teamName, taskID, workerID, prompt string) error {
-	if dispatchQueue == nil {
-		return nil
-	}
-
-	method := reflect.ValueOf(dispatchQueue).MethodByName("Dispatch")
-	if !method.IsValid() {
-		return errors.New("dispatch queue does not implement Dispatch")
-	}
-	if method.Type().NumIn() != 2 {
-		return errors.New("dispatch queue Dispatch signature is invalid")
-	}
-
-	entry := reflect.New(method.Type().In(1)).Elem()
-	setStructField(entry, "TaskID", taskID)
-	setStructField(entry, "WorkerID", workerID)
-	setStructField(entry, "Prompt", prompt)
-	setStructField(entry, "DispatchedAt", time.Now())
-
-	results := method.Call([]reflect.Value{reflect.ValueOf(teamName), entry})
-	if len(results) == 1 && !results[0].IsNil() {
-		return results[0].Interface().(error)
-	}
-
-	return nil
-}
-
-func callDispatchAck(dispatchQueue any, teamName, taskID, workerID string) error {
-	if dispatchQueue == nil {
-		return nil
-	}
-
-	method := reflect.ValueOf(dispatchQueue).MethodByName("Ack")
-	if !method.IsValid() {
-		return errors.New("dispatch queue does not implement Ack")
-	}
-	results := method.Call([]reflect.Value{
-		reflect.ValueOf(teamName),
-		reflect.ValueOf(taskID),
-		reflect.ValueOf(workerID),
-	})
-	if len(results) == 1 && !results[0].IsNil() {
-		return results[0].Interface().(error)
-	}
-
-	return nil
-}
-
-func callDispatchComplete(dispatchQueue any, teamName, taskID string) error {
-	if dispatchQueue == nil {
-		return nil
-	}
-
-	method := reflect.ValueOf(dispatchQueue).MethodByName("Complete")
-	if !method.IsValid() {
-		return errors.New("dispatch queue does not implement Complete")
-	}
-	results := method.Call([]reflect.Value{reflect.ValueOf(teamName), reflect.ValueOf(taskID)})
-	if len(results) == 1 && !results[0].IsNil() {
-		return results[0].Interface().(error)
-	}
-
-	return nil
-}
-
-func setStructField(value reflect.Value, fieldName string, fieldValue interface{}) {
-	field := value.FieldByName(fieldName)
-	if !field.IsValid() || !field.CanSet() {
-		return
-	}
-
-	v := reflect.ValueOf(fieldValue)
-	if !v.IsValid() {
-		return
-	}
-	if v.Type().AssignableTo(field.Type()) {
-		field.Set(v)
-		return
-	}
-	if v.Type().ConvertibleTo(field.Type()) {
-		field.Set(v.Convert(field.Type()))
-	}
-}
-
-func parsePaneIndex(paneID string) (int, error) {
-	trimmed := strings.TrimSpace(strings.TrimPrefix(paneID, "%"))
-	if trimmed == "" {
-		return 0, fmt.Errorf("pane id is empty")
-	}
-
-	index, err := strconv.Atoi(trimmed)
-	if err != nil {
-		return 0, fmt.Errorf("parse pane index from %q: %w", paneID, err)
-	}
-
-	return index, nil
 }

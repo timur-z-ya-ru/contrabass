@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/junhoyeo/contrabass/internal/ipc"
 	"github.com/junhoyeo/contrabass/internal/types"
 )
 
@@ -31,17 +32,7 @@ type EventFilter struct {
 	TaskID   string
 }
 
-// LoggedEvent is a persisted team event record.
-// It extends types.TeamEvent with an ID and optional worker/task identifiers.
-type LoggedEvent struct {
-	ID        string                 `json:"id"`
-	Type      string                 `json:"type"`
-	TeamName  string                 `json:"team_name"`
-	WorkerID  string                 `json:"worker_id,omitempty"`
-	TaskID    string                 `json:"task_id,omitempty"`
-	Data      map[string]interface{} `json:"data,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-}
+type LoggedEvent = ipc.Event
 
 // NewEventLogger creates a new append-only JSONL event logger.
 func NewEventLogger(paths *Paths) *EventLogger {

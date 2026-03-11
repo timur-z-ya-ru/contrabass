@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/junhoyeo/contrabass/internal/ipc"
 )
 
 const (
@@ -15,15 +17,7 @@ const (
 	DispatchStatusCompleted = "completed"
 )
 
-// DispatchEntry represents a dispatch attempt for a task.
-type DispatchEntry struct {
-	TaskID       string     `json:"task_id"`
-	WorkerID     string     `json:"worker_id"`
-	Prompt       string     `json:"prompt"`
-	DispatchedAt time.Time  `json:"dispatched_at"`
-	AckedAt      *time.Time `json:"acked_at,omitempty"`
-	Status       string     `json:"status"`
-}
+type DispatchEntry = ipc.DispatchEntry
 
 // DispatchQueue manages dispatch entries and acknowledgment tracking.
 type DispatchQueue struct {

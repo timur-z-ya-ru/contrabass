@@ -5,16 +5,11 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/junhoyeo/contrabass/internal/ipc"
 )
 
-// Heartbeat captures a worker's liveness and execution status.
-type Heartbeat struct {
-	WorkerID    string    `json:"worker_id"`
-	PID         int       `json:"pid"`
-	CurrentTask string    `json:"current_task,omitempty"`
-	Status      string    `json:"status"`
-	Timestamp   time.Time `json:"timestamp"`
-}
+type Heartbeat = ipc.Heartbeat
 
 // HeartbeatMonitor manages file-based worker heartbeat read/write operations.
 type HeartbeatMonitor struct {
