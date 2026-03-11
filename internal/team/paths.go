@@ -43,6 +43,11 @@ func (p *Paths) WorkerPath(teamName, workerID string) string {
 	return filepath.Join(p.WorkersDir(teamName), workerID+".json")
 }
 
+// HeartbeatPath returns the path to a worker's heartbeat file.
+func (p *Paths) HeartbeatPath(teamName, workerID string) string {
+	return filepath.Join(p.WorkersDir(teamName), workerID, "heartbeat.json")
+}
+
 // MailboxDir returns the directory containing mailbox message files.
 func (p *Paths) MailboxDir(teamName string) string {
 	return filepath.Join(p.TeamDir(teamName), "mailbox")
