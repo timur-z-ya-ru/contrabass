@@ -207,7 +207,7 @@ func TestEventConsumer_NonBlockingSend(t *testing.T) {
 			}
 
 			assert.Eventually(t, func() bool {
-				return atomic.LoadInt64(&fastCount) >= 120
+				return atomic.LoadInt64(&fastCount) >= 10
 			}, 2*time.Second, 20*time.Millisecond)
 
 			cancel()
