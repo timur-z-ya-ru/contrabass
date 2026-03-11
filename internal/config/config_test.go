@@ -203,12 +203,12 @@ func TestWorkflowConfig_WorkerMode(t *testing.T) {
 		want string
 	}{
 		{
-			name: "nil config defaults to goroutine",
+			name: "nil config defaults to tmux",
 			cfg:  nil,
 			want: defaultTeamWorkerMode,
 		},
 		{
-			name: "empty config defaults to goroutine",
+			name: "empty config defaults to tmux",
 			cfg:  &WorkflowConfig{},
 			want: defaultTeamWorkerMode,
 		},
@@ -227,7 +227,7 @@ func TestWorkflowConfig_WorkerMode(t *testing.T) {
 			want: "tmux",
 		},
 		{
-			name: "unknown mode falls back to goroutine",
+			name: "unknown mode falls back to tmux",
 			cfg: &WorkflowConfig{
 				Team: TeamSectionConfig{WorkerMode: "custom"},
 			},

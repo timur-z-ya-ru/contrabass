@@ -229,15 +229,15 @@ func TestConfigWorkerModeDefaultsToGoroutine(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "nil config defaults to goroutine",
+			name:    "nil config defaults to tmux",
 			cfg:     nil,
-			want:    "goroutine",
+			want:    "tmux",
 			wantErr: false,
 		},
 		{
-			name:    "empty worker mode defaults to goroutine",
+			name:    "empty worker mode defaults to tmux",
 			cfg:     &config.WorkflowConfig{},
-			want:    "goroutine",
+			want:    "tmux",
 			wantErr: false,
 		},
 		{

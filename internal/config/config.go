@@ -42,7 +42,7 @@ const (
 	defaultTeamClaimLeaseSeconds = 300
 	defaultTeamStateDir          = ".contrabass/state/team"
 	defaultTeamExecutionMode     = TeamExecutionModeTeam
-	defaultTeamWorkerMode        = "goroutine"
+	defaultTeamWorkerMode        = "tmux"
 )
 
 const (
@@ -535,15 +535,15 @@ func (c *WorkflowConfig) WorkerMode() string {
 	}
 
 	switch mode {
-	case "tmux":
-		return "tmux"
+	case "goroutine":
+		return "goroutine"
 	default:
 		return defaultTeamWorkerMode
 	}
 }
 
 // ValidateWorkerMode checks if the worker mode is valid.
-// Empty values are allowed (they default to "goroutine").
+// Empty values are allowed (they default to "tmux").
 // Valid modes are "goroutine" and "tmux".
 // Returns an error for unknown values.
 func (c *WorkflowConfig) ValidateWorkerMode() error {
