@@ -18,17 +18,21 @@ import (
 
 // Coordinator manages a team of workers executing a staged pipeline.
 type Coordinator struct {
-	teamName  string
-	cfg       *config.WorkflowConfig
-	store     *Store
-	paths     *Paths
-	tasks     *TaskRegistry
-	mailbox   *Mailbox
-	ownership *OwnershipRegistry
-	phases    *PhaseMachine
-	workspace *workspace.Manager
-	runner    agent.AgentRunner
-	logger    *slog.Logger
+	teamName   string
+	cfg        *config.WorkflowConfig
+	store      *Store
+	paths      *Paths
+	tasks      *TaskRegistry
+	heartbeats *HeartbeatMonitor
+	dispatch   *DispatchQueue
+	mailbox    *Mailbox
+	ownership  *OwnershipRegistry
+	phases     *PhaseMachine
+	governance *GovernancePolicy
+	recovery   *Recovery
+	workspace  *workspace.Manager
+	runner     agent.AgentRunner
+	logger     *slog.Logger
 
 	mu      sync.Mutex
 	workers map[string]*workerHandle
@@ -69,24 +73,37 @@ func NewCoordinator(
 	paths := NewPaths(cfg.TeamStateDir())
 	store := NewStore(paths)
 	tasks := NewTaskRegistry(store, paths, cfg.TeamClaimLeaseSeconds())
+	staleThreshold := time.Duration(cfg.TeamClaimLeaseSeconds()) * time.Second
+	heartbeats := NewHeartbeatMonitor(store, paths, staleThreshold)
+	dispatch := NewDispatchQueue(store, paths, staleThreshold)
 	mailbox := NewMailbox(store, paths)
 	ownership := NewOwnershipRegistry(store, paths)
 	phases := NewPhaseMachine(store, tasks, cfg.TeamMaxFixLoops())
+	governance := NewGovernancePolicy(
+		MaxConcurrentTasksRule{MaxTasksPerWorker: 3},
+		PhaseGateRule{},
+		WorkerCapacityRule{MaxWorkers: cfg.TeamMaxWorkers()},
+	)
+	recovery := NewRecovery(store, paths, heartbeats, tasks, dispatch, logger)
 
 	return &Coordinator{
-		teamName:  teamName,
-		cfg:       cfg,
-		store:     store,
-		paths:     paths,
-		tasks:     tasks,
-		mailbox:   mailbox,
-		ownership: ownership,
-		phases:    phases,
-		workspace: ws,
-		runner:    runner,
-		logger:    logger,
-		workers:   make(map[string]*workerHandle),
-		Events:    make(chan types.TeamEvent, 100),
+		teamName:   teamName,
+		cfg:        cfg,
+		store:      store,
+		paths:      paths,
+		tasks:      tasks,
+		heartbeats: heartbeats,
+		dispatch:   dispatch,
+		mailbox:    mailbox,
+		ownership:  ownership,
+		phases:     phases,
+		governance: governance,
+		recovery:   recovery,
+		workspace:  ws,
+		runner:     runner,
+		logger:     logger,
+		workers:    make(map[string]*workerHandle),
+		Events:     make(chan types.TeamEvent, 100),
 	}
 }
 
@@ -125,6 +142,10 @@ func (c *Coordinator) Run(ctx context.Context, tasks []types.TeamTask) error {
 	c.cancel = cancel
 	defer cancel()
 	defer close(c.Events)
+
+	if err := c.recovery.Recover(ctx, c.teamName); err != nil {
+		c.logger.Warn("startup recovery failed", "team", c.teamName, "error", err)
+	}
 
 	for i := range tasks {
 		if err := c.tasks.CreateTask(c.teamName, &tasks[i]); err != nil {
@@ -259,6 +280,10 @@ func (c *Coordinator) runExecPhase(ctx context.Context) error {
 		}
 	}
 
+	if err := c.checkTransitionGovernance(ctx, types.PhaseExec); err != nil {
+		return err
+	}
+
 	return c.phases.Transition(c.teamName, types.PhaseVerify, "exec phase complete")
 }
 
@@ -270,7 +295,13 @@ func (c *Coordinator) runVerifyPhase(ctx context.Context) error {
 			return allErr
 		}
 		if allCompleted {
+			if err := c.checkTransitionGovernance(ctx, types.PhaseVerify); err != nil {
+				return err
+			}
 			return c.phases.Transition(c.teamName, types.PhaseComplete, "verification passed")
+		}
+		if err := c.checkTransitionGovernance(ctx, types.PhaseVerify); err != nil {
+			return err
 		}
 		return c.phases.Transition(c.teamName, types.PhaseFix, "verification found failures")
 	}
@@ -291,9 +322,15 @@ func (c *Coordinator) runVerifyPhase(ctx context.Context) error {
 		return err
 	}
 	if allCompleted {
+		if err := c.checkTransitionGovernance(ctx, types.PhaseVerify); err != nil {
+			return err
+		}
 		return c.phases.Transition(c.teamName, types.PhaseComplete, "verification passed")
 	}
 
+	if err := c.checkTransitionGovernance(ctx, types.PhaseVerify); err != nil {
+		return err
+	}
 	return c.phases.Transition(c.teamName, types.PhaseFix, "verification requires fixes")
 }
 
@@ -323,6 +360,9 @@ func (c *Coordinator) runFixPhase(ctx context.Context) error {
 	}
 
 	if !hasPending {
+		if err := c.checkTransitionGovernance(ctx, types.PhaseFix); err != nil {
+			return err
+		}
 		return c.phases.Transition(c.teamName, types.PhaseComplete, "no failed tasks to fix")
 	}
 
@@ -337,6 +377,22 @@ func (c *Coordinator) workerLoop(ctx context.Context, workerID string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+
+		activeCount, activeWorkerCount := c.workerGovernanceSnapshot(workerID)
+		if err := c.governance.Check(ctx, Decision{
+			Type:              DecisionClaim,
+			WorkerID:          workerID,
+			TeamName:          c.teamName,
+			WorkerActiveTasks: activeCount,
+			ActiveWorkerCount: activeWorkerCount,
+		}); err != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(500 * time.Millisecond):
+			}
+			continue
 		}
 
 		task, token, err := c.tasks.ClaimNextTask(c.teamName, workerID)
@@ -381,6 +437,35 @@ func (c *Coordinator) workerLoop(ctx context.Context, workerID string) error {
 	}
 }
 
+func (c *Coordinator) workerGovernanceSnapshot(workerID string) (int, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	activeCount := 0
+	if worker, ok := c.workers[workerID]; ok && worker.state.CurrentTask != "" {
+		activeCount = 1
+	}
+
+	return activeCount, len(c.workers)
+}
+
+func (c *Coordinator) checkTransitionGovernance(ctx context.Context, phase types.TeamPhase) error {
+	allTerminal, err := c.phases.AllTasksTerminal(c.teamName)
+	if err != nil {
+		return err
+	}
+
+	_, activeWorkerCount := c.workerGovernanceSnapshot("")
+
+	return c.governance.Check(ctx, Decision{
+		Type:                      DecisionTransition,
+		Phase:                     phase,
+		TeamName:                  c.teamName,
+		ActiveWorkerCount:         activeWorkerCount,
+		CurrentPhaseTasksTerminal: allTerminal,
+	})
+}
+
 func (c *Coordinator) executeTask(ctx context.Context, task *types.TeamTask, token string, workerID string) error {
 	issue := types.Issue{
 		ID:          fmt.Sprintf("team-%s-%s", c.teamName, workerID),
@@ -412,7 +497,9 @@ func (c *Coordinator) executeTask(ctx context.Context, task *types.TeamTask, tok
 
 	defer func() {
 		c.mu.Lock()
-		if w, ok := c.workers[workerID]; ok {
+		if workerID == "coordinator" || workerID == "verifier" {
+			delete(c.workers, workerID)
+		} else if w, ok := c.workers[workerID]; ok {
 			w.state.Status = "idle"
 			w.state.CurrentTask = ""
 			w.state.LastHeartbeat = time.Now()

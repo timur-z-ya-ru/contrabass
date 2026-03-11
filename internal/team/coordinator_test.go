@@ -2,8 +2,10 @@ package team
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -118,4 +120,93 @@ func TestRunFixPhaseResetsFailedTasks(t *testing.T) {
 	phase, err := coordinator.phases.CurrentPhase("test-team")
 	require.NoError(t, err)
 	assert.Equal(t, types.PhaseExec, phase)
+}
+
+func TestCoordinatorRunStartupRecoveryCleansStaleHeartbeat(t *testing.T) {
+	cfg := &config.WorkflowConfig{
+		Agent: config.AgentConfig{Type: "codex"},
+		Team: config.TeamSectionConfig{
+			MaxWorkers:        1,
+			MaxFixLoops:       2,
+			ClaimLeaseSeconds: 1,
+			StateDir:          t.TempDir(),
+		},
+	}
+
+	coordinator := NewCoordinator(
+		"test-team",
+		cfg,
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	require.NoError(t, coordinator.Initialize(types.TeamConfig{
+		MaxWorkers:        cfg.TeamMaxWorkers(),
+		MaxFixLoops:       cfg.TeamMaxFixLoops(),
+		ClaimLeaseSeconds: cfg.TeamClaimLeaseSeconds(),
+		StateDir:          cfg.TeamStateDir(),
+		AgentType:         cfg.AgentType(),
+	}))
+
+	staleWorkerID := "stale-worker"
+	require.NoError(t, coordinator.heartbeats.Write("test-team", Heartbeat{WorkerID: staleWorkerID, Timestamp: time.Now()}))
+
+	heartbeatPath := coordinator.paths.HeartbeatPath("test-team", staleWorkerID)
+	old := time.Now().Add(-5 * time.Second)
+	require.NoError(t, os.Chtimes(heartbeatPath, old, old))
+
+	runCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	require.NoError(t, coordinator.Run(runCtx, nil))
+
+	_, err := os.Stat(heartbeatPath)
+	assert.True(t, errors.Is(err, os.ErrNotExist), "expected stale heartbeat to be removed")
+}
+
+func TestWorkerLoopGovernanceBlocksClaimWhenMaxActiveExceeded(t *testing.T) {
+	cfg := &config.WorkflowConfig{
+		Agent: config.AgentConfig{Type: "codex"},
+		Team: config.TeamSectionConfig{
+			MaxWorkers:        1,
+			MaxFixLoops:       2,
+			ClaimLeaseSeconds: 60,
+			StateDir:          t.TempDir(),
+		},
+	}
+
+	coordinator := NewCoordinator(
+		"test-team",
+		cfg,
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	require.NoError(t, coordinator.Initialize(types.TeamConfig{
+		MaxWorkers:        cfg.TeamMaxWorkers(),
+		MaxFixLoops:       cfg.TeamMaxFixLoops(),
+		ClaimLeaseSeconds: cfg.TeamClaimLeaseSeconds(),
+		StateDir:          cfg.TeamStateDir(),
+		AgentType:         cfg.AgentType(),
+	}))
+
+	task := &types.TeamTask{ID: "task-1", Subject: "Blocked claim", Description: "should remain pending"}
+	require.NoError(t, coordinator.tasks.CreateTask("test-team", task))
+
+	coordinator.governance = NewGovernancePolicy(MaxConcurrentTasksRule{MaxTasksPerWorker: 1})
+	coordinator.workers["worker-1"] = &workerHandle{state: types.WorkerState{ID: "worker-1", CurrentTask: "already-active"}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+
+	err := coordinator.workerLoop(ctx, "worker-1")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+
+	stored, getErr := coordinator.tasks.GetTask("test-team", "task-1")
+	require.NoError(t, getErr)
+	assert.Equal(t, types.TaskPending, stored.Status)
+	assert.Nil(t, stored.Claim)
 }
