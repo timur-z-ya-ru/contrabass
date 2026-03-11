@@ -52,6 +52,25 @@ func (s *Store) WriteJSON(path string, v interface{}) error {
 		return fmt.Errorf("marshal json: %w", err)
 	}
 
+	lock := NewFileLock(path)
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("acquire lock for %s: %w", path, err)
+	}
+	defer lock.Unlock()
+
+	return s.writeJSONBytesNoLock(path, data)
+}
+
+func (s *Store) writeJSONNoLock(path string, v interface{}) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal json: %w", err)
+	}
+	return s.writeJSONBytesNoLock(path, data)
+}
+
+func (s *Store) writeJSONBytesNoLock(path string, data []byte) error {
+
 	tmp := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), time.Now().UnixNano())
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write temp file %s: %w", tmp, err)

@@ -68,6 +68,12 @@ func (l *EventLogger) Log(teamName string, event LoggedEvent) error {
 		return fmt.Errorf("create events dir: %w", err)
 	}
 
+	lock := NewFileLock(path)
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("acquire lock for %s: %w", path, err)
+	}
+	defer lock.Unlock()
+
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open events file: %w", err)
