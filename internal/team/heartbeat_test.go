@@ -146,6 +146,16 @@ func TestHeartbeatMonitor_IsStale_UsesFileModTimeOverPayloadTimestamp(t *testing
 	assert.True(t, stale)
 }
 
+func TestHeartbeatMonitor_IsStale_MissingHeartbeatFile(t *testing.T) {
+	store, _, monitor := setupHeartbeatMonitor(t, 5*time.Second)
+	teamName := "team-a"
+	require.NoError(t, store.EnsureDirs(teamName))
+
+	stale, err := monitor.IsStale(teamName, "worker-missing")
+	require.NoError(t, err)
+	assert.True(t, stale)
+}
+
 func TestHeartbeatMonitor_ListStale(t *testing.T) {
 	tests := []struct {
 		name          string

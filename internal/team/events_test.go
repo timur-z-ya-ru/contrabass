@@ -139,6 +139,31 @@ func TestEventLogger_ReadSinceWithFilter(t *testing.T) {
 	assert.Equal(t, "worker-2", events[0].WorkerID)
 }
 
+func TestEventLogger_ReadSince_SkipsMalformedJSONLine(t *testing.T) {
+	paths := NewPaths(t.TempDir())
+	logger := NewEventLogger(paths)
+	teamName := "team-a"
+
+	first := LoggedEvent{Type: "task_claimed", TeamName: teamName, TaskID: "task-1", Timestamp: time.Now()}
+	second := LoggedEvent{Type: "task_completed", TeamName: teamName, TaskID: "task-2", Timestamp: time.Now()}
+
+	firstLine, err := json.Marshal(first)
+	require.NoError(t, err)
+	secondLine, err := json.Marshal(second)
+	require.NoError(t, err)
+
+	path := filepath.Join(paths.EventsDir(teamName), eventsFileName)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(string(firstLine)+"\n{\"type\":\n"+string(secondLine)+"\n"), 0o644))
+
+	events, nextCursor, err := logger.ReadSince(teamName, 0, nil)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	assert.Equal(t, "task-1", events[0].TaskID)
+	assert.Equal(t, "task-2", events[1].TaskID)
+	assert.Greater(t, nextCursor, int64(0))
+}
+
 func TestEventLogger_ReadSinceMissingFile(t *testing.T) {
 	paths := NewPaths(t.TempDir())
 	logger := NewEventLogger(paths)

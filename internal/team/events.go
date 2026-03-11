@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -139,6 +140,10 @@ func (l *EventLogger) ReadSince(teamName string, cursor int64, filter *EventFilt
 	for scanner.Scan() {
 		var event LoggedEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			if isJSONUnmarshalError(err) {
+				slog.Default().Warn("skipping malformed event line", "team", teamName, "error", err)
+				continue
+			}
 			return nil, cursor, fmt.Errorf("decode event line: %w", err)
 		}
 		if matchesFilter(event, filter) {

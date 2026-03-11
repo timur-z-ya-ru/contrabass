@@ -70,6 +70,9 @@ func (m *HeartbeatMonitor) IsStale(teamName, workerID string) (bool, error) {
 	path := m.paths.HeartbeatPath(teamName, workerID)
 	fi, err := os.Stat(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
 		return false, fmt.Errorf("read heartbeat metadata: %w", err)
 	}
 	return m.isStaleAt(fi.ModTime()), nil
