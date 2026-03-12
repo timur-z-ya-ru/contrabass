@@ -22,17 +22,19 @@ Today Contrabass ships with:
 - Issue tracker adapters for **Linear**, **GitHub Issues**, and a built-in **Internal Board** (local filesystem, no external service required)
 - Agent runners for **Codex app-server**, **OpenCode**, **oh-my-opencode**, **OMX (oh-my-codex)**, and **OMC (oh-my-claudecode)**
 - Git-worktree-based workspace provisioning under `workspaces/<issue-id>`
-- Teams: multi-agent coordination with a local task board, phased pipeline (plan → exec → verify), and live TUI team table
+- Teams: multi-agent coordination with a local task board, phased pipeline (plan → exec → verify), live TUI team table, and dual worker modes (tmux-based multi-process or goroutine-based in-process)
 - An orchestrator with claim/release, timeout detection, stall detection, deterministic retry backoff, and state snapshots
 - A Charm v2 terminal UI built with Bubble Tea, Bubbles, and Lip Gloss
 - A React dashboard served from the Go binary, with state snapshots and live SSE updates
 - Go unit/integration tests, TUI snapshot tests, and dashboard component/hook tests
+- A tmux-based multi-process worker mode (default) alongside the in-process goroutine mode, with JSONL event logging, file-based heartbeats, dispatch queue, governance policies, and crash recovery
 
 ## Requirements
 
 - **Go 1.25+**
 - **Bun 1.3+** for the dashboard/landing workspace
 - **Git** (workspace creation uses `git worktree`)
+- **tmux** (required for the default tmux worker mode in team runs; not needed for goroutine mode)
 - A supported agent runtime:
   - `codex app-server`
   - `opencode serve`
@@ -109,6 +111,14 @@ LINEAR_API_KEY=your-linear-token \
 --port int           web dashboard port (0 = disabled)
 ```
 
+#### Team subcommand flags
+
+```text
+contrabass team run --config workflow.md [flags]
+
+--worker-mode string   override worker mode (goroutine|tmux, default from config)
+```
+
 ## How Contrabass works
 
 1. Poll the configured tracker for candidate issues.
@@ -126,6 +136,29 @@ LINEAR_API_KEY=your-linear-token \
 - The Codex runner speaks newline-delimited JSON (`JSONL`) to `codex app-server` rather than `Content-Length` framed messages. See [`docs/codex-protocol.md`](docs/codex-protocol.md).
 - The web dashboard currently has live metrics, running sessions, and retry queue data. The rate-limit panel exists, but there is not yet a live rate-limit feed behind it.
 - The workflow parser already accepts more Symphony-shaped fields than the runtime fully consumes today. For example, `workspace`, `hooks`, and some `codex` settings are parsed, but the current runtime mainly uses tracker selection, timeouts, retry settings, binary paths, and prompt/template fields.
+
+### Team worker modes
+
+Teams support two worker modes, configured via `team.worker_mode` in the workflow file or the `--worker-mode` CLI flag:
+
+| Mode | Description | Default |
+|------|-------------|---------|
+| `tmux` | Each worker runs in a separate tmux pane with process isolation, cross-process IPC via JSONL events, and file-based heartbeats | Yes |
+| `goroutine` | Workers run as goroutines within the contrabass process — lighter weight, no tmux dependency | |
+
+**tmux mode** (default) provides:
+
+- Process isolation — each agent CLI runs in its own tmux pane
+- JSONL event log for cross-process event streaming
+- File-based heartbeat monitoring with stale detection
+- Dispatch queue with ack tracking and timeout redelivery
+- Governance policies with role routing heuristics
+- Crash recovery with state diagnosis and automatic cleanup
+- Advisory file locking via `flock(2)` for safe concurrent access
+
+**goroutine mode** runs all workers in-process using Go's `errgroup` and `sync.Mutex`. It requires no external dependencies but shares the process address space.
+
+Team state is persisted as JSON files under `.contrabass/state/team/{teamName}/`.
 
 ## Workflow file format
 
@@ -206,6 +239,23 @@ Notes:
 - `team_spec` is passed directly to the team runtime, such as `1:executor`, `2:executor`, or `2:claude`.
 - Contrabass writes the rendered task prompt into `.contrabass/runner/<runner>/...` inside the workspace and instructs the team runtime to execute from that file.
 - OMC/OMX team runners generally require the underlying toolchain prerequisites those CLIs expect, especially tmux-based team support.
+
+### Team configuration
+
+The `team` section configures multi-agent coordination:
+
+```yaml
+team:
+  max_workers: 5
+  max_fix_loops: 3
+  claim_lease_seconds: 300
+  state_dir: .contrabass/state/team
+  execution_mode: team    # team | single | auto
+  worker_mode: tmux       # tmux (default) | goroutine
+```
+
+- `worker_mode`: Controls how agent workers are spawned. `tmux` (default) uses separate tmux panes with process isolation. `goroutine` runs workers in-process.
+- `execution_mode`: Controls coordination strategy. `team` uses the full phased pipeline, `single` runs one agent at a time, `auto` selects based on task count.
 
 ### Example workflow files
 
@@ -352,8 +402,8 @@ CI and release workflows run automatically via GitHub Actions:
 To ship a new release:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 This builds cross-platform binaries (macOS/Linux, amd64/arm64) via [GoReleaser](https://goreleaser.com),
