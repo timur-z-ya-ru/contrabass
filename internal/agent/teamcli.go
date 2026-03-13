@@ -702,9 +702,9 @@ func (r *teamCLIRunner) checkTeamHealthAndStall(ctx context.Context, proc *teamC
 			} else {
 				for _, result := range results {
 					emit("worker/restarted", map[string]interface{}{
-						"team_name":       proc.teamName,
-						"worker":          result.WorkerName,
-						"success":         result.Success,
+						"team_name":        proc.teamName,
+						"worker":           result.WorkerName,
+						"success":          result.Success,
 						"reassigned_tasks": result.ReassignedTasks,
 					})
 				}
