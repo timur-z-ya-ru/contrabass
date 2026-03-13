@@ -34,8 +34,8 @@ func TestCLIMailboxMessageConversion(t *testing.T) {
 	if msg.Content != cliMsg.Body {
 		t.Errorf("Content mismatch: got %s, want %s", msg.Content, cliMsg.Body)
 	}
-	if msg.Status != types.MessageDelivered {
-		t.Errorf("Status should be delivered, got %s", msg.Status)
+	if msg.Status != types.MessageAcknowledged {
+		t.Errorf("Status should be acknowledged when notified_at is set, got %s", msg.Status)
 	}
 }
 

@@ -381,6 +381,13 @@ func (r *teamCLIRunner) monitorProcess(ctx context.Context, proc *teamCLIProcess
 				"task":      mustJSONMap(task),
 			})
 			seenStarted = true
+
+			if task.Owner != "" {
+				if _, sendErr := r.SendMessage(ctx, proc.workspace, proc.teamName, "coordinator", task.Owner,
+					fmt.Sprintf("Task %s is now in progress. Good luck!", task.ID)); sendErr != nil {
+					r.logger.Warn("failed to send task-start notification", "team", proc.teamName, "task", task.ID, "worker", task.Owner, "error", sendErr)
+				}
+			}
 		}
 
 		if task.Status == lastTaskStatus {
@@ -431,6 +438,8 @@ func (r *teamCLIRunner) monitorProcess(ctx context.Context, proc *teamCLIProcess
 	ticker := time.NewTicker(r.pollInterval)
 	defer ticker.Stop()
 
+	var lastEventID string
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -456,11 +465,12 @@ func (r *teamCLIRunner) monitorProcess(ctx context.Context, proc *teamCLIProcess
 				return
 			}
 
-			// Periodic health and stall checks using the new modules.
 			pollCount++
 			if pollCount%healthCheckInterval == 0 {
 				r.checkTeamHealthAndStall(ctx, proc, emit)
 			}
+
+			r.awaitNextEvent(ctx, proc, &lastEventID, emit)
 		}
 	}
 }
@@ -686,7 +696,6 @@ func firstNonEmpty(values ...string) string {
 func (r *teamCLIRunner) checkTeamHealthAndStall(ctx context.Context, proc *teamCLIProcess, emit func(string, map[string]interface{})) {
 	const maxHeartbeatAge = 60 * time.Second
 
-	// Check stall state first (cheaper, single API call).
 	stallState, err := r.ReadStallState(ctx, proc.workspace, proc.teamName)
 	if err != nil {
 		r.logger.Warn("stall state check failed", "team", proc.teamName, "error", err)
@@ -694,32 +703,253 @@ func (r *teamCLIRunner) checkTeamHealthAndStall(ctx context.Context, proc *teamC
 	}
 
 	r.nudgeIdleWorkers(ctx, proc, stallState, emit)
+	r.checkIdleState(ctx, proc, emit)
+	r.processUnreadMessages(ctx, proc, emit)
 
 	if stallState.TeamStalled {
-		emit("team/stalled", map[string]interface{}{
-			"team_name":       proc.teamName,
-			"reasons":         stallState.Reasons,
-			"dead_workers":    stallState.DeadWorkers,
-			"stalled_workers": stallState.StalledWorkers,
-			"pending_tasks":   stallState.PendingTaskCount,
+		r.handleStalledTeam(ctx, proc, stallState, maxHeartbeatAge, emit)
+	}
+
+	r.checkWorkerInterventions(ctx, proc, maxHeartbeatAge, emit)
+	r.reconcileTaskStates(ctx, proc, emit)
+}
+
+func (r *teamCLIRunner) checkIdleState(ctx context.Context, proc *teamCLIProcess, emit func(string, map[string]interface{})) {
+	idleState, err := r.ReadIdleState(ctx, proc.workspace, proc.teamName)
+	if err != nil {
+		r.logger.Warn("idle state check failed", "team", proc.teamName, "error", err)
+		return
+	}
+
+	if idleState.AllWorkersIdle {
+		emit("team/all_idle", map[string]interface{}{
+			"team_name":    proc.teamName,
+			"worker_count": idleState.WorkerCount,
+			"idle_workers": idleState.IdleWorkers,
+		})
+	}
+}
+
+func (r *teamCLIRunner) processUnreadMessages(ctx context.Context, proc *teamCLIProcess, emit func(string, map[string]interface{})) {
+	messages, err := r.GetUnreadMessages(ctx, proc.workspace, proc.teamName, "coordinator")
+	if err != nil {
+		r.logger.Warn("failed to read unread messages", "team", proc.teamName, "error", err)
+		return
+	}
+
+	for _, msg := range messages {
+		emit("message/received", map[string]interface{}{
+			"team_name":  proc.teamName,
+			"message_id": msg.ID,
+			"from":       msg.From,
+			"content":    msg.Content,
 		})
 
-		if len(stallState.DeadWorkers) > 0 {
-			results, restartErr := r.RestartDeadWorkers(ctx, proc.workspace, proc.teamName, maxHeartbeatAge)
-			if restartErr != nil {
-				r.logger.Warn("failed to restart dead workers", "team", proc.teamName, "error", restartErr)
-			} else {
-				for _, result := range results {
-					emit("worker/restarted", map[string]interface{}{
-						"team_name":        proc.teamName,
-						"worker":           result.WorkerName,
-						"success":          result.Success,
-						"reassigned_tasks": result.ReassignedTasks,
-					})
+		if err := r.MarkMessageDelivered(ctx, proc.workspace, proc.teamName, "coordinator", msg.ID); err != nil {
+			r.logger.Warn("failed to mark message delivered", "team", proc.teamName, "message_id", msg.ID, "error", err)
+			continue
+		}
+		if err := r.MarkMessageNotified(ctx, proc.workspace, proc.teamName, "coordinator", msg.ID); err != nil {
+			r.logger.Warn("failed to mark message notified", "team", proc.teamName, "message_id", msg.ID, "error", err)
+		}
+	}
+}
+
+func (r *teamCLIRunner) handleStalledTeam(ctx context.Context, proc *teamCLIProcess, stallState *StallState, maxHeartbeatAge time.Duration, emit func(string, map[string]interface{})) {
+	recentEvents, err := r.ReadEvents(ctx, proc.workspace, proc.teamName, &EventFilter{})
+	if err != nil {
+		r.logger.Warn("failed to read recent events for stall diagnostics", "team", proc.teamName, "error", err)
+	}
+
+	stallData := map[string]interface{}{
+		"team_name":       proc.teamName,
+		"reasons":         stallState.Reasons,
+		"dead_workers":    stallState.DeadWorkers,
+		"stalled_workers": stallState.StalledWorkers,
+		"pending_tasks":   stallState.PendingTaskCount,
+	}
+	if err == nil && len(recentEvents) > 0 {
+		last := recentEvents[len(recentEvents)-1]
+		stallData["last_event_type"] = last.Type
+		stallData["last_event_time"] = last.Timestamp.Format(time.RFC3339)
+	}
+	emit("team/stalled", stallData)
+
+	if len(stallState.DeadWorkers) > 0 {
+		results, restartErr := r.RestartDeadWorkers(ctx, proc.workspace, proc.teamName, maxHeartbeatAge)
+		if restartErr != nil {
+			r.logger.Warn("failed to restart dead workers", "team", proc.teamName, "error", restartErr)
+		} else {
+			for _, result := range results {
+				emit("worker/restarted", map[string]interface{}{
+					"team_name":        proc.teamName,
+					"worker":           result.WorkerName,
+					"success":          result.Success,
+					"reassigned_tasks": result.ReassignedTasks,
+				})
+				if !result.Success {
+					r.createSubtask(ctx, proc,
+						fmt.Sprintf("Recover from dead worker %s", result.WorkerName),
+						fmt.Sprintf("Worker %s died and restart failed: %s. Reassign its tasks and resume work.", result.WorkerName, result.Error),
+						emit,
+					)
 				}
 			}
 		}
 	}
+}
+
+func (r *teamCLIRunner) checkWorkerInterventions(ctx context.Context, proc *teamCLIProcess, maxHeartbeatAge time.Duration, emit func(string, map[string]interface{})) {
+	health, err := r.GetTeamHealth(ctx, proc.workspace, proc.teamName, maxHeartbeatAge)
+	if err != nil {
+		r.logger.Warn("team health check failed", "team", proc.teamName, "error", err)
+		return
+	}
+
+	for _, report := range health.WorkerReports {
+		reason, checkErr := r.CheckWorkerNeedsIntervention(ctx, proc.workspace, proc.teamName, report.WorkerName, maxHeartbeatAge)
+		if checkErr != nil {
+			r.logger.Warn("worker intervention check failed", "team", proc.teamName, "worker", report.WorkerName, "error", checkErr)
+			continue
+		}
+		if reason == "" {
+			continue
+		}
+
+		emit("worker/needs_intervention", map[string]interface{}{
+			"team_name": proc.teamName,
+			"worker":    report.WorkerName,
+			"reason":    reason,
+		})
+
+		if report.ConsecutiveErrors >= 3 {
+			if qErr := r.QuarantineWorker(ctx, proc.workspace, proc.teamName, report.WorkerName, reason); qErr != nil {
+				r.logger.Warn("failed to quarantine worker", "team", proc.teamName, "worker", report.WorkerName, "error", qErr)
+			} else {
+				emit("worker/quarantined", map[string]interface{}{
+					"team_name": proc.teamName,
+					"worker":    report.WorkerName,
+					"reason":    reason,
+				})
+			}
+		}
+	}
+}
+
+func (r *teamCLIRunner) reconcileTaskStates(ctx context.Context, proc *teamCLIProcess, emit func(string, map[string]interface{})) {
+	pendingTasks, err := r.GetTasksByStatus(ctx, proc.workspace, proc.teamName, "pending")
+	if err != nil {
+		r.logger.Warn("failed to list pending tasks", "team", proc.teamName, "error", err)
+		return
+	}
+	if len(pendingTasks) == 0 {
+		return
+	}
+
+	health, err := r.GetTeamHealth(ctx, proc.workspace, proc.teamName, 60*time.Second)
+	if err != nil {
+		return
+	}
+
+	var idleWorkers []string
+	for _, report := range health.WorkerReports {
+		if report.IsAlive && report.Status == "idle" && report.CurrentTaskID == "" {
+			idleWorkers = append(idleWorkers, report.WorkerName)
+		}
+	}
+
+	for i, task := range pendingTasks {
+		if i >= len(idleWorkers) {
+			break
+		}
+		worker := idleWorkers[i]
+		claimResult, claimErr := r.ClaimTask(ctx, proc.workspace, proc.teamName, task.ID, worker, nil)
+		if claimErr != nil {
+			r.logger.Warn("failed to claim task for idle worker", "team", proc.teamName, "task", task.ID, "worker", worker, "error", claimErr)
+			continue
+		}
+		if claimResult.OK {
+			if _, transErr := r.TransitionTaskStatus(ctx, proc.workspace, proc.teamName, task.ID, "pending", "in_progress", claimResult.ClaimToken, nil, nil); transErr != nil {
+				r.logger.Warn("failed to transition task to in_progress", "team", proc.teamName, "task", task.ID, "error", transErr)
+			}
+
+			if _, sendErr := r.SendMessage(ctx, proc.workspace, proc.teamName, "coordinator", worker,
+				fmt.Sprintf("Task %s (%s) has been assigned to you.", task.ID, task.Subject)); sendErr != nil {
+				r.logger.Warn("failed to notify worker of task assignment", "team", proc.teamName, "task", task.ID, "worker", worker, "error", sendErr)
+			}
+			emit("task/assigned", map[string]interface{}{
+				"team_name": proc.teamName,
+				"task_id":   task.ID,
+				"worker":    worker,
+			})
+		}
+	}
+
+	r.releaseExpiredClaims(ctx, proc, emit)
+}
+
+func (r *teamCLIRunner) releaseExpiredClaims(ctx context.Context, proc *teamCLIProcess, emit func(string, map[string]interface{})) {
+	inProgressTasks, err := r.GetTasksByStatus(ctx, proc.workspace, proc.teamName, "in_progress")
+	if err != nil {
+		return
+	}
+
+	health, err := r.GetTeamHealth(ctx, proc.workspace, proc.teamName, 60*time.Second)
+	if err != nil {
+		return
+	}
+
+	deadWorkerSet := make(map[string]bool)
+	for _, report := range health.WorkerReports {
+		if !report.IsAlive {
+			deadWorkerSet[report.WorkerName] = true
+		}
+	}
+
+	for _, task := range inProgressTasks {
+		if task.Claim == nil {
+			continue
+		}
+		if !deadWorkerSet[task.Claim.WorkerID] {
+			continue
+		}
+
+		if _, err := r.ReleaseTaskClaim(ctx, proc.workspace, proc.teamName, task.ID, task.Claim.Token, task.Claim.WorkerID); err != nil {
+			r.logger.Warn("failed to release expired claim", "team", proc.teamName, "task", task.ID, "worker", task.Claim.WorkerID, "error", err)
+			continue
+		}
+
+		updates := map[string]interface{}{"status": "pending"}
+		if _, err := r.UpdateTask(ctx, proc.workspace, proc.teamName, task.ID, updates); err != nil {
+			r.logger.Warn("failed to reset task to pending", "team", proc.teamName, "task", task.ID, "error", err)
+		}
+
+		emit("task/claim_released", map[string]interface{}{
+			"team_name": proc.teamName,
+			"task_id":   task.ID,
+			"worker":    task.Claim.WorkerID,
+			"reason":    "worker_dead",
+		})
+	}
+}
+
+func (r *teamCLIRunner) createSubtask(ctx context.Context, proc *teamCLIProcess, subject, description string, emit func(string, map[string]interface{})) {
+	task := &types.TeamTask{
+		Subject:     subject,
+		Description: description,
+	}
+
+	created, err := r.CreateTask(ctx, proc.workspace, proc.teamName, task)
+	if err != nil {
+		r.logger.Warn("failed to create subtask", "team", proc.teamName, "subject", subject, "error", err)
+		return
+	}
+
+	emit("task/created", map[string]interface{}{
+		"team_name": proc.teamName,
+		"task_id":   created.ID,
+		"subject":   created.Subject,
+	})
 }
 
 // gracefulShutdownWorkers sends shutdown requests to all known workers before
@@ -775,6 +1005,27 @@ func (r *teamCLIRunner) nudgeIdleWorkers(ctx context.Context, proc *teamCLIProce
 	if _, err := r.BroadcastMessage(ctx, proc.workspace, proc.teamName, "coordinator", body); err != nil {
 		r.logger.Warn("failed to nudge idle workers", "team", proc.teamName, "error", err)
 	}
+}
+
+func (r *teamCLIRunner) awaitNextEvent(ctx context.Context, proc *teamCLIProcess, lastEventID *string, emit func(string, map[string]interface{})) {
+	filter := &EventFilter{}
+	if *lastEventID != "" {
+		filter.AfterEventID = *lastEventID
+	}
+
+	event, err := r.AwaitEvent(ctx, proc.workspace, proc.teamName, filter, 500*time.Millisecond)
+	if err != nil {
+		return
+	}
+
+	if eventID, ok := event.Data["event_id"].(string); ok && eventID != "" {
+		*lastEventID = eventID
+	}
+	emit("team/event", map[string]interface{}{
+		"team_name":  proc.teamName,
+		"event_type": event.Type,
+		"data":       event.Data,
+	})
 }
 
 func formatCommandOutput(output []byte) string {

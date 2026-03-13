@@ -35,6 +35,13 @@ type cliTaskClaim struct {
 }
 
 func (t *cliTask) toTeamTask() types.TeamTask {
+	// Use CreatedAt as fallback for UpdatedAt when CompletedAt is not set,
+	// since the CLI response doesn't provide a dedicated updated_at field.
+	updatedAt := t.CreatedAt
+	if !t.CompletedAt.IsZero() {
+		updatedAt = t.CompletedAt
+	}
+
 	task := types.TeamTask{
 		ID:          t.ID,
 		Subject:     t.Subject,
@@ -44,14 +51,14 @@ func (t *cliTask) toTeamTask() types.TeamTask {
 		DependsOn:   t.DependsOn,
 		Version:     t.Version,
 		CreatedAt:   t.CreatedAt,
-		UpdatedAt:   t.CompletedAt,
+		UpdatedAt:   updatedAt,
 		Result:      t.Result,
 	}
 	if t.Claim != nil {
 		task.Claim = &types.TaskClaim{
 			WorkerID: t.Claim.Owner,
 			Token:    t.Claim.Token,
-			LeasedAt: t.Claim.LeasedUntil,
+			LeasedAt: t.CreatedAt, // Use task CreatedAt as claim start; LeasedUntil is the expiration, not the start time.
 		}
 	}
 	return task

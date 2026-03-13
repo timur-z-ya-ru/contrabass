@@ -23,8 +23,9 @@ func (m *cliMailboxMessage) toMailboxMessage() types.MailboxMessage {
 	status := types.MessagePending
 	if !m.DeliveredAt.IsZero() {
 		status = types.MessageDelivered
-	} else if !m.NotifiedAt.IsZero() {
-		status = types.MessageDelivered
+	}
+	if !m.NotifiedAt.IsZero() {
+		status = types.MessageAcknowledged
 	}
 	return types.MailboxMessage{
 		ID:        m.MessageID,
