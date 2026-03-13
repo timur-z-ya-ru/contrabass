@@ -59,19 +59,19 @@ func (t *cliTask) toTeamTask() types.TeamTask {
 
 // ClaimTaskResult represents the result of claiming a task.
 type ClaimTaskResult struct {
-	OK           bool             `json:"ok"`
-	Task         *types.TeamTask  `json:"-"`
-	RawTask      *cliTask         `json:"task,omitempty"`
-	ClaimToken   string           `json:"claimToken,omitempty"`
-	Error        string           `json:"error,omitempty"`
-	Dependencies []string         `json:"dependencies,omitempty"`
+	OK           bool            `json:"ok"`
+	Task         *types.TeamTask `json:"-"`
+	RawTask      *cliTask        `json:"task,omitempty"`
+	ClaimToken   string          `json:"claimToken,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Dependencies []string        `json:"dependencies,omitempty"`
 }
 
 // TransitionTaskResult represents the result of transitioning a task.
 type TransitionTaskResult struct {
-	OK      bool            `json:"ok"`
-	RawTask *cliTask        `json:"task,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	OK      bool     `json:"ok"`
+	RawTask *cliTask `json:"task,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }
 
 // CreateTask creates a new task in the team.
