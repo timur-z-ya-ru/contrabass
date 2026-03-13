@@ -234,6 +234,8 @@ func (c *Coordinator) runWorkerPhase(ctx context.Context, next types.TeamPhase, 
 		"task":      task.Subject,
 	})
 
+	c.notifyTaskAssignment("coordinator", task)
+
 	if err := c.executeTask(ctx, task, token, "coordinator"); err != nil {
 		if failErr := c.tasks.FailTask(c.teamName, task.ID, token, err.Error()); failErr != nil {
 			c.logger.Warn("failed to mark task as failed", "team", c.teamName, "task", task.ID, "error", failErr)
@@ -452,6 +454,8 @@ func (c *Coordinator) workerLoop(ctx context.Context, workerID string) error {
 			"task":      task.Subject,
 		})
 
+		c.notifyTaskAssignment(workerID, task)
+
 		err = c.executeTask(ctx, task, token, workerID)
 		if releaseErr := c.ownership.ReleaseTask(c.teamName, task.ID); releaseErr != nil {
 			c.logger.Warn("failed to release task ownership", "worker", workerID, "task", task.ID, "error", releaseErr)
@@ -477,6 +481,14 @@ func (c *Coordinator) workerLoop(ctx context.Context, workerID string) error {
 			"worker_id": workerID,
 			"task_id":   task.ID,
 		})
+	}
+}
+
+func (c *Coordinator) notifyTaskAssignment(workerID string, task *types.TeamTask) {
+	body := fmt.Sprintf("Task %s assigned to you: %s", task.ID, task.Subject)
+	if err := c.mailbox.Send(c.teamName, "coordinator", workerID, body); err != nil {
+		c.logger.Warn("failed to send task assignment notification",
+			"worker", workerID, "task", task.ID, "error", err)
 	}
 }
 

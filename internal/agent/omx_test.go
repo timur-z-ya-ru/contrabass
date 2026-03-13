@@ -221,6 +221,33 @@ func newFakeTeamCLIServer(t *testing.T, logPath string) *fakeTeamCLIServer {
 				}
 				resp := map[string]interface{}{"ok": true, "operation": op, "data": map[string]interface{}{"tasks": []interface{}{task}}}
 				require.NoError(t, json.NewEncoder(w).Encode(resp))
+			case "send-message":
+				resp := map[string]interface{}{"ok": true, "operation": op, "data": map[string]interface{}{
+					"message": map[string]interface{}{
+						"message_id":  "msg-001",
+						"from_worker": "coordinator",
+						"to_worker":   "worker-1",
+						"body":        "test",
+						"created_at":  time.Now().UTC().Format(time.RFC3339),
+					},
+				}}
+				require.NoError(t, json.NewEncoder(w).Encode(resp))
+			case "broadcast":
+				resp := map[string]interface{}{"ok": true, "operation": op, "data": map[string]interface{}{
+					"count":    1,
+					"messages": []interface{}{},
+				}}
+				require.NoError(t, json.NewEncoder(w).Encode(resp))
+			case "mailbox-list":
+				resp := map[string]interface{}{"ok": true, "operation": op, "data": map[string]interface{}{
+					"worker":   "worker-1",
+					"count":    0,
+					"messages": []interface{}{},
+				}}
+				require.NoError(t, json.NewEncoder(w).Encode(resp))
+			case "mailbox-mark-delivered", "mailbox-mark-notified":
+				resp := map[string]interface{}{"ok": true, "operation": op, "data": json.RawMessage("{}")}
+				require.NoError(t, json.NewEncoder(w).Encode(resp))
 			case "write-shutdown-request":
 				resp := map[string]interface{}{"ok": true, "operation": op, "data": json.RawMessage("{}")}
 				require.NoError(t, json.NewEncoder(w).Encode(resp))

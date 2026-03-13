@@ -258,6 +258,7 @@ func (r *teamCLIRunner) Stop(proc *AgentProcess) error {
 	// with its own independent timeout so an expired grace period cannot
 	// starve the force-shutdown.
 	graceCtx, graceCancel := context.WithTimeout(context.Background(), r.startupTimeout/2)
+	r.broadcastShutdownNotice(graceCtx, state.workspace, state.teamName)
 	r.gracefulShutdownWorkers(graceCtx, state.workspace, state.teamName)
 	graceCancel()
 
@@ -285,6 +286,7 @@ func (r *teamCLIRunner) Close() error {
 		proc.cancel()
 		proc.remove(r)
 		graceCtx, graceCancel := context.WithTimeout(context.Background(), r.startupTimeout/2)
+		r.broadcastShutdownNotice(graceCtx, proc.workspace, proc.teamName)
 		r.gracefulShutdownWorkers(graceCtx, proc.workspace, proc.teamName)
 		graceCancel()
 		forceCtx, forceCancel := context.WithTimeout(context.Background(), r.startupTimeout)
@@ -691,6 +693,8 @@ func (r *teamCLIRunner) checkTeamHealthAndStall(ctx context.Context, proc *teamC
 		return
 	}
 
+	r.nudgeIdleWorkers(ctx, proc, stallState, emit)
+
 	if stallState.TeamStalled {
 		emit("team/stalled", map[string]interface{}{
 			"team_name":       proc.teamName,
@@ -700,7 +704,6 @@ func (r *teamCLIRunner) checkTeamHealthAndStall(ctx context.Context, proc *teamC
 			"pending_tasks":   stallState.PendingTaskCount,
 		})
 
-		// Attempt to restart dead workers.
 		if len(stallState.DeadWorkers) > 0 {
 			results, restartErr := r.RestartDeadWorkers(ctx, proc.workspace, proc.teamName, maxHeartbeatAge)
 			if restartErr != nil {
@@ -743,6 +746,34 @@ func (r *teamCLIRunner) gracefulShutdownWorkers(ctx context.Context, workspace, 
 	select {
 	case <-ctx.Done():
 	case <-time.After(2 * time.Second):
+	}
+}
+
+// broadcastShutdownNotice sends a shutdown notice to all workers via the
+// messaging API so they can wrap up gracefully before the force-stop.
+func (r *teamCLIRunner) broadcastShutdownNotice(ctx context.Context, workspace, teamName string) {
+	if _, err := r.BroadcastMessage(ctx, workspace, teamName, "coordinator",
+		"Team is shutting down. Finish current work and prepare to stop."); err != nil {
+		r.logger.Warn("failed to broadcast shutdown notice", "team", teamName, "error", err)
+	}
+}
+
+// nudgeIdleWorkers broadcasts a nudge to idle workers when pending tasks exist,
+// prompting them to pick up available work.
+func (r *teamCLIRunner) nudgeIdleWorkers(ctx context.Context, proc *teamCLIProcess, stallState *StallState, emit func(string, map[string]interface{})) {
+	if len(stallState.IdleWorkers) == 0 || stallState.PendingTaskCount == 0 {
+		return
+	}
+
+	emit("workers/idle_nudge", map[string]interface{}{
+		"team_name":     proc.teamName,
+		"idle_workers":  stallState.IdleWorkers,
+		"pending_tasks": stallState.PendingTaskCount,
+	})
+
+	body := fmt.Sprintf("There are %d pending tasks available. Please pick up work.", stallState.PendingTaskCount)
+	if _, err := r.BroadcastMessage(ctx, proc.workspace, proc.teamName, "coordinator", body); err != nil {
+		r.logger.Warn("failed to nudge idle workers", "team", proc.teamName, "error", err)
 	}
 }
 
