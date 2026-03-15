@@ -702,6 +702,11 @@ func (r *teamCLIRunner) checkTeamHealthAndStall(ctx context.Context, proc *teamC
 		return
 	}
 
+	// Skip nudges and health checks if the team has completed or is shutting down.
+	if stallState.PendingTaskCount == 0 && len(stallState.StalledWorkers) == 0 && len(stallState.DeadWorkers) == 0 && stallState.AllWorkersIdle {
+		return
+	}
+
 	r.nudgeIdleWorkers(ctx, proc, stallState, emit)
 	r.checkIdleState(ctx, proc, emit)
 	r.processUnreadMessages(ctx, proc, emit)
@@ -1006,7 +1011,7 @@ func (r *teamCLIRunner) nudgeIdleWorkers(ctx context.Context, proc *teamCLIProce
 		"pending_tasks": stallState.PendingTaskCount,
 	})
 
-	body := fmt.Sprintf("There are %d pending tasks available. Please pick up work.", stallState.PendingTaskCount)
+	body := fmt.Sprintf("There are %d pending tasks available. Read your inbox, continue your assigned task, and if blocked send the coordinator a concrete status update.", stallState.PendingTaskCount)
 	if _, err := r.BroadcastMessage(ctx, proc.workspace, proc.teamName, "coordinator", body); err != nil {
 		r.logger.Warn("failed to nudge idle workers", "team", proc.teamName, "error", err)
 	}
