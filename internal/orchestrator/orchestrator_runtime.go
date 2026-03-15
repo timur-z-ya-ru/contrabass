@@ -209,7 +209,7 @@ func hasExplicitSuccessSignal(message string) bool {
 	}
 
 	switch normalized {
-	case "turn/completed", "item/completed", "task/completed":
+	case "turn/completed", "item/completed", "task/completed", "session.status":
 		return true
 	}
 
