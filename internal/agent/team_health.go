@@ -132,7 +132,7 @@ func (r *teamCLIRunner) GetTeamHealth(ctx context.Context, workspace, teamName s
 			summary.DeadWorkers++
 		case "quarantined":
 			summary.QuarantinedWorkers++
-		case "idle", "working", "active":
+		default:
 			if report.IsAlive {
 				summary.HealthyWorkers++
 			} else {
