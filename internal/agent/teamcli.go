@@ -468,9 +468,8 @@ func (r *teamCLIRunner) monitorProcess(ctx context.Context, proc *teamCLIProcess
 			pollCount++
 			if pollCount%healthCheckInterval == 0 {
 				r.checkTeamHealthAndStall(ctx, proc, emit)
+				r.awaitNextEvent(ctx, proc, &lastEventID, emit)
 			}
-
-			r.awaitNextEvent(ctx, proc, &lastEventID, emit)
 		}
 	}
 }
