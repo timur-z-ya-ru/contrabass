@@ -12,6 +12,8 @@ func RenderPrompt(template string, issue types.Issue) (string, error) {
 
 	bindings := map[string]any{
 		"issue": map[string]any{
+			"id":          issue.ID,
+			"identifier":  issue.Identifier,
 			"title":       issue.Title,
 			"description": issue.Description,
 			"url":         issue.URL,
