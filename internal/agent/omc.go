@@ -26,6 +26,9 @@ func NewOMCRunner(cfg *config.WorkflowConfig, timeout time.Duration) *OMCRunner 
 		startArgs: func(teamSpec, task string) []string {
 			return []string{"team", teamSpec, task}
 		},
+		shutdownArgs: func(teamName string) []string {
+			return []string{"team", "shutdown", teamName, "--force"}
+		},
 	})
 
 	return &OMCRunner{teamCLIRunner: inner}

@@ -190,6 +190,9 @@ func (r *teamCLIRunner) Start(ctx context.Context, issue types.Issue, workspace 
 	startCtx, cancel := context.WithTimeout(ctx, r.startupTimeout)
 	defer cancel()
 
+	// Pre-start cleanup: shutdown any stale team with the same name from a previous attempt.
+	_ = r.shutdownTeam(startCtx, workspace, teamName)
+
 	if output, err := r.runCommand(startCtx, workspace, r.startArgs(r.teamSpec, launchTask)...); err != nil {
 		return nil, fmt.Errorf("start %s team %q: %w%s", r.name, teamName, err, formatCommandOutput(output))
 	}
