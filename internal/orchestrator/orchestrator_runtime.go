@@ -82,9 +82,6 @@ func (o *Orchestrator) completeRun(ctx context.Context, issueID string, doneErr 
 	o.mu.Unlock()
 
 	defer entry.cancel()
-	if err := o.workspace.Cleanup(ctx, issueID); err != nil {
-		logging.LogIssueEvent(o.logger, issueID, "workspace_cleanup_failed", "stage", "complete_run", "err", err)
-	}
 
 	finalAttempt := entry.attempt
 	successSignal := completionSignalFromEvent(finalAttempt.LastEvent)
@@ -109,6 +106,16 @@ func (o *Orchestrator) completeRun(ctx context.Context, issueID string, doneErr 
 			Error:     finalAttempt.Error,
 		},
 	})
+
+	// Post completion: push branch and create PR before workspace cleanup
+	if finalAttempt.Phase == types.Succeeded {
+		o.postCompletionPushAndPR(ctx, entry.workspace, entry.issue)
+	}
+
+	// Cleanup workspace (removes git worktree)
+	if err := o.workspace.Cleanup(ctx, issueID); err != nil {
+		logging.LogIssueEvent(o.logger, issueID, "workspace_cleanup_failed", "stage", "complete_run", "err", err)
+	}
 
 	// Post completion comment (best-effort)
 	commentBody := fmt.Sprintf(
