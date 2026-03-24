@@ -74,6 +74,9 @@ func (r *ClaudeRunner) Start(ctx context.Context, issue types.Issue, workspace s
 		"--output-format", "stream-json",
 		"--verbose",
 		"--no-session-persistence",
+		"--dangerously-skip-permissions",
+		"--disable-slash-commands",
+		"--settings", `{"enabledPlugins":{},"hooks":{}}`,
 	}
 
 	if r.model != "" {
@@ -106,7 +109,12 @@ func (r *ClaudeRunner) Start(ctx context.Context, issue types.Issue, workspace s
 	cmdCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(cmdCtx, r.binaryPath, args...)
 	cmd.Dir = workspace
-	cmd.Env = append(os.Environ(), "DISABLE_OMC=true")
+	cmd.Env = append(os.Environ(),
+		"DISABLE_OMC=true",
+		"OMC_SKIP_HOOKS=*",
+		"DISABLE_SUPERPOWERS=true",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+	)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -238,12 +246,22 @@ func (r *ClaudeRunner) mapClaudeEvent(msg map[string]interface{}) *types.AgentEv
 		}
 
 	case "assistant":
+		// Check if assistant message contains tool_use content blocks
+		if message, ok := msg["message"].(map[string]interface{}); ok {
+			if content, ok := message["content"].([]interface{}); ok {
+				for _, block := range content {
+					if b, ok := block.(map[string]interface{}); ok {
+						if b["type"] == "tool_use" {
+							return &types.AgentEvent{Type: "item/started", Data: msg, Timestamp: now}
+						}
+					}
+				}
+			}
+		}
 		return &types.AgentEvent{Type: "turn/started", Data: msg, Timestamp: now}
 
-	case "tool_use":
-		return &types.AgentEvent{Type: "item/started", Data: msg, Timestamp: now}
-
-	case "tool_result":
+	case "user":
+		// User messages contain tool_result blocks
 		return &types.AgentEvent{Type: "item/completed", Data: msg, Timestamp: now}
 
 	case "result":
