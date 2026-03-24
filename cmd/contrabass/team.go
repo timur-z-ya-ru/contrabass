@@ -174,6 +174,16 @@ func createRunner(cfg *config.WorkflowConfig, teamName string, logger *slog.Logg
 		omxCfg := cfg.Clone()
 		omxCfg.OMX.BinaryPath = omxBin
 		return agent.NewOMXRunner(omxCfg, 30*time.Second), nil
+	case "claude":
+		claudeBin := os.Getenv("CLAUDE_BINARY")
+		if claudeBin == "" {
+			claudeBin = cfg.ClaudeBinaryPath()
+		}
+		return agent.NewClaudeRunner(agent.ClaudeConfig{
+			BinaryPath: claudeBin,
+			Model:      cfg.ClaudeModel(),
+			MaxTurns:   cfg.ClaudeMaxTurns(),
+		}), nil
 	case "omc":
 		omcBin := os.Getenv("OMC_BINARY")
 		if omcBin == "" {

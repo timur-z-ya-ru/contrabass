@@ -73,6 +73,7 @@ type WorkflowConfig struct {
 	OpenCode             OpenCodeConfig     `yaml:"opencode"`
 	OMX                  OMXConfig          `yaml:"omx"`
 	OMC                  OMCConfig          `yaml:"omc"`
+	Claude               ClaudeConfig       `yaml:"claude"`
 	OhMyOpenCode         OhMyOpenCodeConfig `yaml:"oh_my_opencode"`
 	Team                 TeamSectionConfig  `yaml:"team"`
 	PromptTemplate       string             `yaml:"-"`
@@ -142,6 +143,12 @@ type OMCConfig struct {
 	TeamSpec         string `yaml:"team_spec"`
 	PollIntervalMs   int    `yaml:"poll_interval_ms"`
 	StartupTimeoutMs int    `yaml:"startup_timeout_ms"`
+}
+
+type ClaudeConfig struct {
+	BinaryPath string `yaml:"binary_path"`
+	Model      string `yaml:"model"`
+	MaxTurns   int    `yaml:"max_turns"`
 }
 
 // TeamSectionConfig holds settings for multi-agent team coordination.
@@ -423,6 +430,27 @@ func (c *WorkflowConfig) OMCStartupTimeoutMs() int {
 		return defaultOMCStartupTimeoutMs
 	}
 	return c.OMC.StartupTimeoutMs
+}
+
+func (c *WorkflowConfig) ClaudeBinaryPath() string {
+	if c == nil || c.Claude.BinaryPath == "" {
+		return "claude"
+	}
+	return c.Claude.BinaryPath
+}
+
+func (c *WorkflowConfig) ClaudeModel() string {
+	if c == nil {
+		return ""
+	}
+	return c.Claude.Model
+}
+
+func (c *WorkflowConfig) ClaudeMaxTurns() int {
+	if c == nil || c.Claude.MaxTurns <= 0 {
+		return 50
+	}
+	return c.Claude.MaxTurns
 }
 
 func (c *WorkflowConfig) OhMyOpenCodePluginVersion() string {
