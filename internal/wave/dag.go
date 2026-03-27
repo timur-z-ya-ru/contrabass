@@ -8,11 +8,14 @@ import (
 
 // Node represents an issue in the dependency DAG.
 type Node struct {
-	IssueID   string
-	BlockedBy []string
-	Blocks    []string // reverse edges, computed
-	Labels    []string
-	State     types.IssueState
+	IssueID        string
+	BlockedBy      []string
+	Blocks         []string // reverse edges, computed
+	Labels         []string
+	State          types.IssueState
+	TotalTokensIn  int64
+	TotalTokensOut int64
+	Attempts       int
 }
 
 // DAG is a directed acyclic graph of issue dependencies.
