@@ -14,6 +14,8 @@ type MockTracker struct {
 	Comments map[string][]string         // issueID -> comments
 	Claimed  map[string]bool             // issueID -> claimed
 	States   map[string]types.IssueState // issueID -> state
+	Labels   map[string][]string         // issueID -> labels
+	MergedPRs map[string]bool            // issueID -> has merged PR
 
 	// Error fields for injecting errors in tests.
 	FetchErr   error
@@ -21,6 +23,8 @@ type MockTracker struct {
 	ReleaseErr error
 	UpdateErr  error
 	CommentErr error
+	LabelErr   error
+	MergedPRErr error
 }
 
 // Compile-time interface satisfaction check.
@@ -29,10 +33,12 @@ var _ Tracker = (*MockTracker)(nil)
 // NewMockTracker creates a new MockTracker with initialized maps.
 func NewMockTracker() *MockTracker {
 	return &MockTracker{
-		Issues:   []types.Issue{},
-		Comments: make(map[string][]string),
-		Claimed:  make(map[string]bool),
-		States:   make(map[string]types.IssueState),
+		Issues:    []types.Issue{},
+		Comments:  make(map[string][]string),
+		Claimed:   make(map[string]bool),
+		States:    make(map[string]types.IssueState),
+		Labels:    make(map[string][]string),
+		MergedPRs: make(map[string]bool),
 	}
 }
 
@@ -90,4 +96,42 @@ func (m *MockTracker) PostComment(_ context.Context, issueID string, body string
 	}
 	m.Comments[issueID] = append(m.Comments[issueID], body)
 	return nil
+}
+
+// AddLabel adds a label to the issue or returns the configured error.
+func (m *MockTracker) AddLabel(_ context.Context, issueID string, label string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.LabelErr != nil {
+		return m.LabelErr
+	}
+	m.Labels[issueID] = append(m.Labels[issueID], label)
+	return nil
+}
+
+// RemoveLabel removes a label from the issue or returns the configured error.
+func (m *MockTracker) RemoveLabel(_ context.Context, issueID string, label string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.LabelErr != nil {
+		return m.LabelErr
+	}
+	labels := m.Labels[issueID]
+	for i, l := range labels {
+		if l == label {
+			m.Labels[issueID] = append(labels[:i], labels[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+// HasMergedPR returns whether the issue has a merged PR or the configured error.
+func (m *MockTracker) HasMergedPR(_ context.Context, issueID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.MergedPRErr != nil {
+		return false, m.MergedPRErr
+	}
+	return m.MergedPRs[issueID], nil
 }

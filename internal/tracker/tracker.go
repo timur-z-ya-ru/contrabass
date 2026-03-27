@@ -23,3 +23,14 @@ type Tracker interface {
 	// PostComment posts a comment on an issue in the tracker.
 	PostComment(ctx context.Context, issueID string, body string) error
 }
+
+// LabelManager is an optional interface for trackers that support label management.
+type LabelManager interface {
+	AddLabel(ctx context.Context, issueID string, label string) error
+	RemoveLabel(ctx context.Context, issueID string, label string) error
+}
+
+// PRVerifier is an optional interface for trackers that can verify merged PRs.
+type PRVerifier interface {
+	HasMergedPR(ctx context.Context, issueID string) (bool, error)
+}
