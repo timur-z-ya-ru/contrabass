@@ -585,7 +585,15 @@ func (o *Orchestrator) canDispatch(maxAgents int) bool {
 	running := len(o.running)
 	o.mu.Unlock()
 
-	return checkBoundedConcurrency(running, maxAgents)
+	effectiveMax := maxAgents
+	if o.loadMonitor != nil {
+		adaptive := o.loadMonitor.Concurrency()
+		if adaptive < effectiveMax {
+			effectiveMax = adaptive
+		}
+	}
+
+	return checkBoundedConcurrency(running, effectiveMax)
 }
 
 func (o *Orchestrator) isManagedIssue(issueID string) bool {

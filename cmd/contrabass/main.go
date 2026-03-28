@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	"github.com/junhoyeo/contrabass/internal/hub"
+	"github.com/junhoyeo/contrabass/internal/loadmon"
 	"github.com/junhoyeo/contrabass/internal/logging"
 	"github.com/junhoyeo/contrabass/internal/orchestrator"
 	"github.com/junhoyeo/contrabass/internal/tracker"
@@ -273,6 +274,9 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 		}
 	}
 	orch.SetWaveManager(waveMgr)
+
+	// Adaptive concurrency: scales between 1 and max_concurrency based on system load.
+	orch.SetLoadMonitor(loadmon.New(loadmon.DefaultConfig(cfg.MaxConcurrency())))
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/junhoyeo/contrabass/internal/agent"
 	"github.com/junhoyeo/contrabass/internal/config"
+	"github.com/junhoyeo/contrabass/internal/loadmon"
 	"github.com/junhoyeo/contrabass/internal/logging"
 	"github.com/junhoyeo/contrabass/internal/tracker"
 	"github.com/junhoyeo/contrabass/internal/types"
@@ -73,6 +74,8 @@ type Orchestrator struct {
 	issueCacheOrder []string
 
 	stateBasePath string // base directory for .contrabass/state.json; empty = cwd
+
+	loadMonitor *loadmon.Monitor // adaptive concurrency; nil = static mode
 }
 
 type runSignal struct {
@@ -137,6 +140,11 @@ func (o *Orchestrator) Events() <-chan OrchestratorEvent {
 	return o.events
 }
 
+// SetLoadMonitor enables adaptive concurrency control.
+func (o *Orchestrator) SetLoadMonitor(m *loadmon.Monitor) {
+	o.loadMonitor = m
+}
+
 func (o *Orchestrator) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("context is nil")
@@ -145,6 +153,12 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	// Restore backoff queue from previous run.
 	if err := o.LoadState(); err != nil {
 		o.logger.Printf("persistence: load failed (non-fatal): %v", err)
+	}
+
+	// Start adaptive load monitor if configured.
+	if o.loadMonitor != nil {
+		o.loadMonitor.Start()
+		defer o.loadMonitor.Stop()
 	}
 
 	pollInterval := time.Duration(o.currentConfig().PollIntervalMs()) * time.Millisecond
@@ -201,6 +215,16 @@ func (o *Orchestrator) runCycle(ctx context.Context, supervisor *errgroup.Group,
 
 	issues, err := o.tracker.FetchIssues(ctx)
 	if err != nil {
+		// Pause on rate limit instead of burning cycles.
+		var rlErr *tracker.RateLimitError
+		if errors.As(err, &rlErr) && rlErr.RetryAfter > 0 {
+			logging.LogOrchestratorEvent(o.logger, "rate_limited", "retry_after", rlErr.RetryAfter)
+			select {
+			case <-ctx.Done():
+			case <-time.After(rlErr.RetryAfter):
+			}
+			return
+		}
 		logging.LogOrchestratorEvent(o.logger, "fetch_issues_failed", "err", err)
 		o.emitStatusUpdate()
 		return
