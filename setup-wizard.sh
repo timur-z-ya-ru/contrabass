@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Contrabass Setup Wizard
+# DEPRECATED: Use Issue Planner skill instead (issue-planner)
+# Issue Planner creates: GitHub Issues + wave-config.yaml + WORKFLOW.md (Steps 7, 8, 8.5)
+# This wizard only needed for: systemd service setup (see bottom of file)
+#
+# Contrabass Setup Wizard (legacy)
 # Настраивает GitHub project board + WORKFLOW.md + systemd для нового проекта
 
 CYAN='\033[0;36m'
