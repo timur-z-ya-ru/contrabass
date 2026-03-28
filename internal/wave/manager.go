@@ -191,41 +191,41 @@ func (m *Manager) OnIssueCompleted(ctx context.Context, issueID string) <-chan P
 
 	m.mu.Lock()
 	delete(m.openSet, issueID)
-	pipeline := m.pipeline
 	m.mu.Unlock()
 
-	currentWave := findCurrentWave(pipeline)
+	currentWave := m.findCurrentWave()
 	if currentWave == nil {
+		// All waves complete.
 		ch <- PromotionResult{}
 		return ch
 	}
 
 	// Check if all issues in the current wave are done (absent from openSet).
 	m.mu.RLock()
-	openSet := m.openSet
-	m.mu.RUnlock()
-
 	allDone := true
 	for _, id := range currentWave.Issues {
-		if openSet[id] {
+		if m.openSet[id] {
 			allDone = false
 			break
 		}
 	}
+	m.mu.RUnlock()
 
 	if !allDone {
 		ch <- PromotionResult{}
 		return ch
 	}
 
-	nextWave := findNextWave(pipeline)
+	nextWave := m.findNextWave()
 	if nextWave == nil {
 		ch <- PromotionResult{}
 		return ch
 	}
 
 	// Build allIssues map for PromoteWave.
-	allIssues := buildAllIssuesMap(pipeline)
+	m.mu.RLock()
+	allIssues := buildAllIssuesMap(m.pipeline)
+	m.mu.RUnlock()
 
 	go func() {
 		select {
@@ -309,14 +309,14 @@ func (m *Manager) waveIndex(issueID string) int {
 func (m *Manager) findCurrentWave() *Wave {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return findCurrentWave(m.pipeline)
+	return findCurrentWaveWith(m.pipeline, m.openSet)
 }
 
 // findNextWave returns the wave after the current wave.
 func (m *Manager) findNextWave() *Wave {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return findNextWave(m.pipeline)
+	return findNextWaveWith(m.pipeline, m.openSet)
 }
 
 // shouldVerifyMerge returns true when PRVerifier is available and the dep is closed.
@@ -389,34 +389,49 @@ func blocksCount(p *Pipeline, issueID string) int {
 	return len(node.Blocks)
 }
 
-// findCurrentWave returns the first wave that contains at least one issue still
-// present in the pipeline (we can't access openSet here; caller handles that).
-// We return the lowest-index wave across all phases.
-func findCurrentWave(p *Pipeline) *Wave {
+// findCurrentWaveWith returns the first wave (across all phases, in order) that
+// still has at least one issue present in openSet (i.e., still open/incomplete).
+// If all waves are complete, it returns nil.
+func findCurrentWaveWith(p *Pipeline, openSet map[string]bool) *Wave {
 	if p == nil {
 		return nil
 	}
 	for i := range p.Phases {
 		for j := range p.Phases[i].Waves {
-			return &p.Phases[i].Waves[j]
+			w := &p.Phases[i].Waves[j]
+			for _, id := range w.Issues {
+				if openSet[id] {
+					return w
+				}
+			}
 		}
 	}
 	return nil
 }
 
-// findNextWave returns the wave that follows the first wave in the pipeline.
-func findNextWave(p *Pipeline) *Wave {
+// findNextWaveWith returns the wave after the current wave (first with open
+// issues). If the current wave is the last in its phase, returns the first wave
+// of the next phase. If no more waves exist, returns nil.
+func findNextWaveWith(p *Pipeline, openSet map[string]bool) *Wave {
 	if p == nil {
 		return nil
 	}
+	foundCurrent := false
 	for i := range p.Phases {
-		waves := p.Phases[i].Waves
-		if len(waves) > 1 {
-			return &waves[1]
-		}
-		// Check next phase.
-		if i+1 < len(p.Phases) && len(p.Phases[i+1].Waves) > 0 {
-			return &p.Phases[i+1].Waves[0]
+		for j := range p.Phases[i].Waves {
+			w := &p.Phases[i].Waves[j]
+			if !foundCurrent {
+				// Check if this is the current wave (has open issues).
+				for _, id := range w.Issues {
+					if openSet[id] {
+						foundCurrent = true
+						break
+					}
+				}
+				continue
+			}
+			// This is the wave after the current one.
+			return w
 		}
 	}
 	return nil

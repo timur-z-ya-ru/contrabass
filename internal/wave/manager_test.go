@@ -2,10 +2,14 @@ package wave
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/junhoyeo/contrabass/internal/tracker"
 	"github.com/junhoyeo/contrabass/internal/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestManager_NewManager_NilTracker verifies that the manager can be created
@@ -160,4 +164,115 @@ func issueIDs(issues []types.Issue) []string {
 		ids[i] = iss.ID
 	}
 	return ids
+}
+
+func TestManager_MultiWavePromotion(t *testing.T) {
+	// Setup: 2 waves. Wave 0: issues 1,2. Wave 1: issues 3,4.
+	// Complete all Wave 0 issues -> Wave 1 should become current.
+	mock := tracker.NewMockTracker()
+	mock.MergedPRs["1"] = true
+	mock.MergedPRs["2"] = true
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "wave-config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+phases:
+  - name: "Phase 1"
+    waves:
+      - issues: ["1", "2"]
+      - issues: ["3", "4"]
+`), 0644)
+
+	mgr, err := NewManager(mock, cfgPath, nil)
+	require.NoError(t, err)
+
+	// All 4 issues start open
+	issues := []types.Issue{
+		{ID: "1", State: types.Unclaimed},
+		{ID: "2", State: types.Unclaimed},
+		{ID: "3", State: types.Unclaimed, BlockedBy: []string{"1"}},
+		{ID: "4", State: types.Unclaimed, BlockedBy: []string{"2"}},
+	}
+	mgr.Refresh(issues)
+
+	// Verify Wave 0 is current
+	cw := mgr.findCurrentWave()
+	require.NotNil(t, cw)
+	assert.Equal(t, 0, cw.Index)
+
+	// Complete issue 1 (remove from open set)
+	mgr.mu.Lock()
+	delete(mgr.openSet, "1")
+	mgr.mu.Unlock()
+
+	// Wave 0 still current (issue 2 still open)
+	cw = mgr.findCurrentWave()
+	require.NotNil(t, cw)
+	assert.Equal(t, 0, cw.Index)
+
+	// Complete issue 2
+	mgr.mu.Lock()
+	delete(mgr.openSet, "2")
+	mgr.mu.Unlock()
+
+	// Now Wave 1 should be current
+	cw = mgr.findCurrentWave()
+	require.NotNil(t, cw)
+	assert.Equal(t, 1, cw.Index)
+
+	// Next wave should be nil (Wave 1 is the last)
+	nw := mgr.findNextWave()
+	assert.Nil(t, nw)
+}
+
+func TestManager_FindNextWave_CrossPhase(t *testing.T) {
+	mock := tracker.NewMockTracker()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "wave-config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+phases:
+  - name: "Phase 1"
+    waves:
+      - issues: ["1"]
+  - name: "Phase 2"
+    waves:
+      - issues: ["2"]
+`), 0644)
+
+	mgr, _ := NewManager(mock, cfgPath, nil)
+	issues := []types.Issue{
+		{ID: "1", State: types.Unclaimed},
+		{ID: "2", State: types.Unclaimed},
+	}
+	mgr.Refresh(issues)
+
+	// Current wave is Phase 1 Wave 0
+	nw := mgr.findNextWave()
+	require.NotNil(t, nw)
+	// Next wave should be Phase 2 Wave 0 (issue "2")
+	assert.Contains(t, nw.Issues, "2")
+}
+
+func TestManager_AllWavesComplete(t *testing.T) {
+	mock := tracker.NewMockTracker()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "wave-config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+phases:
+  - name: "Phase 1"
+    waves:
+      - issues: ["1"]
+`), 0644)
+
+	mgr, _ := NewManager(mock, cfgPath, nil)
+	issues := []types.Issue{{ID: "1", State: types.Unclaimed}}
+	mgr.Refresh(issues)
+
+	// Complete all
+	mgr.mu.Lock()
+	delete(mgr.openSet, "1")
+	mgr.mu.Unlock()
+
+	assert.Nil(t, mgr.findCurrentWave())
+	assert.Nil(t, mgr.findNextWave())
 }
