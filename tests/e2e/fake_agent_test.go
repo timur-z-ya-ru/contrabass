@@ -32,7 +32,7 @@ func TestFakeAgentCodexProtocol(t *testing.T) {
 	tmpDir := t.TempDir()
 	issue := types.Issue{ID: "E2E-FAKE-1", Title: "fake agent protocol"}
 
-	proc, err := runner.Start(ctx, issue, tmpDir, "test prompt")
+	proc, err := runner.Start(ctx, issue, tmpDir, "test prompt", nil)
 	require.NoError(t, err)
 
 	defer func() {

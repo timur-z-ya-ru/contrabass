@@ -6,10 +6,20 @@ import (
 	"github.com/junhoyeo/contrabass/internal/types"
 )
 
+// RunOptions carries per-dispatch configuration for token optimization.
+type RunOptions struct {
+	MaxTurns      int
+	ModelOverride string
+	IsRetry       bool
+	PrevError     string
+	PrevPhase     string
+	Attempt       int
+}
+
 // AgentRunner defines the interface for running a coding agent.
 type AgentRunner interface {
 	// Start launches a coding agent process for the given issue.
-	Start(ctx context.Context, issue types.Issue, workspace string, prompt string) (*AgentProcess, error)
+	Start(ctx context.Context, issue types.Issue, workspace string, prompt string, opts *RunOptions) (*AgentProcess, error)
 
 	// Stop terminates a running agent process.
 	Stop(proc *AgentProcess) error

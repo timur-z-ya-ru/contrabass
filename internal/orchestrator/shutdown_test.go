@@ -19,7 +19,7 @@ type stopCountingRunner struct {
 	stopCalls int
 }
 
-func (r *stopCountingRunner) Start(context.Context, types.Issue, string, string) (*agent.AgentProcess, error) {
+func (r *stopCountingRunner) Start(context.Context, types.Issue, string, string, *agent.RunOptions) (*agent.AgentProcess, error) {
 	return nil, errors.New("not implemented")
 }
 

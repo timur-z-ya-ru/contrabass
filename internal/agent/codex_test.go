@@ -25,7 +25,7 @@ import (
 func TestCodexProtocolSequence(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "sequence"), 5*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 
 	event := waitForEvent(t, proc.Events)
@@ -50,7 +50,7 @@ func TestCodexProtocolSequence(t *testing.T) {
 func TestEventParsing(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "events"), 5*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 
 	events := collectEvents(t, proc.Events, proc.Done, 4, 5*time.Second)
@@ -73,7 +73,7 @@ func TestEventParsing(t *testing.T) {
 func TestTimeoutKillsProcess(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "hang"), 2*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 
 	runner.timeout = 100 * time.Millisecond
@@ -90,7 +90,7 @@ func TestTimeoutKillsProcess(t *testing.T) {
 func TestProcessCrash(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "crash"), 2*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 
 	select {
@@ -103,7 +103,7 @@ func TestProcessCrash(t *testing.T) {
 
 func TestMalformedJSON(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "malformed"), 2*time.Second)
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 	protocolErr := waitForEvent(t, proc.Events)
 	assert.Equal(t, "protocol/error", protocolErr.Type)
@@ -131,7 +131,7 @@ func TestCodexRunner_ConcurrentStartStop(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 
-			proc, err := runner.Start(context.Background(), types.Issue{ID: fmt.Sprintf("MT-%d", idx), Title: "Concurrent start-stop"}, workspace, "hello")
+			proc, err := runner.Start(context.Background(), types.Issue{ID: fmt.Sprintf("MT-%d", idx), Title: "Concurrent start-stop"}, workspace, "hello", nil)
 			if err != nil {
 				errCh <- fmt.Errorf("start failed: %w", err)
 				return
@@ -172,7 +172,7 @@ func TestCodexRunner_ConcurrentStartStop(t *testing.T) {
 func TestCodexRunner_StopWithFullEventBuffer(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "flood-events"), 3*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 
 	stopDone := make(chan error, 1)
@@ -199,7 +199,7 @@ func TestCodexRunner_HandshakeTimeout(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "silent-handshake"), timeout)
 
 	start := time.Now()
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
@@ -212,7 +212,7 @@ func TestCodexRunner_HandshakeTimeout(t *testing.T) {
 func TestCodexRunner_LargeJSONLLine(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "large-line"), 5*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 
 	events := collectEvents(t, proc.Events, proc.Done, 2, 10*time.Second)
@@ -231,7 +231,7 @@ func TestCodexRunner_LargeJSONLLine(t *testing.T) {
 func TestCodexRunner_MalformedJSONEmitsProtocolError(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "malformed"), 2*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-11", Title: "Task 11"}, t.TempDir(), "hello", nil)
 	require.NoError(t, err)
 
 	events := collectEvents(t, proc.Events, proc.Done, 2, 5*time.Second)
@@ -256,7 +256,7 @@ func TestCodexRunner_TimestampedUpdatesForwardedToRecipient(t *testing.T) {
 	t.Run("core_test.exs", func(t *testing.T) {
 		runner := NewCodexRunner(helperCommand(t, "timestamped-updates"), 2*time.Second)
 
-		proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "CORE-422", Title: "Continuation update"}, t.TempDir(), "hello")
+		proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "CORE-422", Title: "Continuation update"}, t.TempDir(), "hello", nil)
 		require.NoError(t, err)
 
 		events := collectEvents(t, proc.Events, proc.Done, 2, 5*time.Second)
@@ -277,7 +277,7 @@ func TestCodexRunner_ApprovalPolicyNeverAutoApproves(t *testing.T) {
 	t.Run("app_server_test.exs", func(t *testing.T) {
 		runner := NewCodexRunner(helperCommand(t, "approval-never"), 2*time.Second)
 
-		proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "APP-321", Title: "Approval policy never"}, t.TempDir(), "hello")
+		proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "APP-321", Title: "Approval policy never"}, t.TempDir(), "hello", nil)
 		require.NoError(t, err)
 
 		events := collectEvents(t, proc.Events, proc.Done, 3, 5*time.Second)
@@ -305,7 +305,7 @@ func TestCodexRunner_StderrForwardedToLogger(t *testing.T) {
 		var logs bytes.Buffer
 		runner.logger = log.NewWithOptions(&logs, log.Options{Level: log.DebugLevel})
 
-		proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "APP-500", Title: "stderr forwarding"}, t.TempDir(), "hello")
+		proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-35", Identifier: "APP-500", Title: "stderr forwarding"}, t.TempDir(), "hello", nil)
 		require.NoError(t, err)
 
 		select {
@@ -333,7 +333,7 @@ func TestCodexRunner_EmptyBinaryPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := NewCodexRunner(tt.binaryPath, 5*time.Second)
-			proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "Test"}, t.TempDir(), "hello")
+			proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "Test"}, t.TempDir(), "hello", nil)
 			require.Error(t, err)
 			assert.Nil(t, proc)
 			assert.Contains(t, err.Error(), "codex binary path is empty")
@@ -344,7 +344,7 @@ func TestCodexRunner_EmptyBinaryPath(t *testing.T) {
 func TestCodexRunner_RPCError(t *testing.T) {
 	runner := NewCodexRunner(helperCommand(t, "rpc-error"), 5*time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "Test"}, t.TempDir(), "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "Test"}, t.TempDir(), "hello", nil)
 	require.Error(t, err)
 	assert.Nil(t, proc)
 	assert.Contains(t, err.Error(), "rpc error for id 1")

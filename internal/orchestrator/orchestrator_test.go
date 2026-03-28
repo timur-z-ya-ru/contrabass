@@ -323,8 +323,9 @@ func (r *trackingRunner) Start(
 	issue types.Issue,
 	workspacePath string,
 	prompt string,
+	opts *agent.RunOptions,
 ) (*agent.AgentProcess, error) {
-	proc, err := r.base.Start(ctx, issue, workspacePath, prompt)
+	proc, err := r.base.Start(ctx, issue, workspacePath, prompt, opts)
 	if err != nil {
 		return nil, err
 	}

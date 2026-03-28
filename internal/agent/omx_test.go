@@ -48,7 +48,7 @@ func TestOMXRunner_StartStopLifecycle(t *testing.T) {
 	runner := NewOMXRunner(cfg, time.Second)
 
 	issue := types.Issue{ID: "CB-101", Title: "Add OMX runner"}
-	proc, err := runner.Start(context.Background(), issue, workspace, "Implement the feature")
+	proc, err := runner.Start(context.Background(), issue, workspace, "Implement the feature", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, proc.SessionID)
 
@@ -89,7 +89,7 @@ func TestOMXRunner_RalphShutdown(t *testing.T) {
 	}
 	runner := NewOMXRunner(cfg, time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-102", Title: "Ralph mode"}, workspace, "Handle shutdown")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-102", Title: "Ralph mode"}, workspace, "Handle shutdown", nil)
 	require.NoError(t, err)
 	require.NoError(t, runner.Stop(proc))
 
@@ -108,7 +108,7 @@ func TestOMXRunner_FailedTask(t *testing.T) {
 
 	cfg := &config.WorkflowConfig{OMX: config.OMXConfig{BinaryPath: server.binaryPath}}
 	runner := NewOMXRunner(cfg, time.Second)
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-103", Title: "Failing task"}, workspace, "Make it fail")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-103", Title: "Failing task"}, workspace, "Make it fail", nil)
 	require.NoError(t, err)
 
 	event1 := waitForEvent(t, proc.Events)

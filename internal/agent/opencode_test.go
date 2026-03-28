@@ -60,7 +60,7 @@ func TestOpenCodeRunner_Start(t *testing.T) {
 	runner := newTestOpenCodeRunner(server.URL)
 	primeTestOpenCodeServer(runner, workspace, server.URL, 4242)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "OpenCode"}, workspace, "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MT-1", Title: "OpenCode"}, workspace, "hello", nil)
 	require.NoError(t, err)
 	require.Equal(t, "sess-1", proc.SessionID)
 	require.Equal(t, 4242, proc.PID)
@@ -104,7 +104,7 @@ func TestOpenCodeRunner_StartWithAuth(t *testing.T) {
 	runner := NewOpenCodeRunner("opencode serve", 0, "secret", "alice", 2*time.Second)
 	primeTestOpenCodeServer(runner, workspace, server.URL, 4242)
 
-	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello", nil)
 	require.NoError(t, err)
 	assertDoneNil(t, proc.Done)
 
@@ -162,7 +162,7 @@ func TestOpenCodeRunner_SessionError(t *testing.T) {
 	workspace := t.TempDir()
 	runner := newTestOpenCodeRunner(server.URL)
 	primeTestOpenCodeServer(runner, workspace, server.URL, 4242)
-	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello", nil)
 	require.NoError(t, err)
 
 	select {
@@ -238,7 +238,7 @@ func TestOpenCodeRunner_SSESessionFilter(t *testing.T) {
 	workspace := t.TempDir()
 	runner := newTestOpenCodeRunner(server.URL)
 	primeTestOpenCodeServer(runner, workspace, server.URL, 4242)
-	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello", nil)
 	require.NoError(t, err)
 
 	events := collectOpenCodeEvents(t, proc.Events, proc.Done, 2, 3*time.Second)
@@ -272,7 +272,7 @@ func TestOpenCodeRunner_HeartbeatIgnored(t *testing.T) {
 	workspace := t.TempDir()
 	runner := newTestOpenCodeRunner(server.URL)
 	primeTestOpenCodeServer(runner, workspace, server.URL, 4242)
-	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello")
+	proc, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello", nil)
 	require.NoError(t, err)
 
 	events := collectOpenCodeEvents(t, proc.Events, proc.Done, 1, 3*time.Second)
@@ -322,9 +322,9 @@ func TestOpenCodeRunner_ConcurrentSessions(t *testing.T) {
 	runner := newTestOpenCodeRunner(server.URL)
 	primeTestOpenCodeServer(runner, workspace, server.URL, 4242)
 
-	proc1, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello-1")
+	proc1, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello-1", nil)
 	require.NoError(t, err)
-	proc2, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello-2")
+	proc2, err := runner.Start(context.Background(), types.Issue{}, workspace, "hello-2", nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 4242, proc1.PID)
@@ -455,9 +455,9 @@ func TestOpenCodeRunner_WorkspaceScopedServers(t *testing.T) {
 	primeTestOpenCodeServer(runner, workspaceA, serverA.URL, 4242)
 	primeTestOpenCodeServer(runner, workspaceB, serverB.URL, 4343)
 
-	procA, err := runner.Start(context.Background(), types.Issue{}, workspaceA, "hello-a")
+	procA, err := runner.Start(context.Background(), types.Issue{}, workspaceA, "hello-a", nil)
 	require.NoError(t, err)
-	procB, err := runner.Start(context.Background(), types.Issue{}, workspaceB, "hello-b")
+	procB, err := runner.Start(context.Background(), types.Issue{}, workspaceB, "hello-b", nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 4242, procA.PID)

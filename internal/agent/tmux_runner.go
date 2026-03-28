@@ -108,7 +108,8 @@ func (p *tmuxProcess) remove(r *TmuxRunner) {
 	})
 }
 
-func (r *TmuxRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string) (*AgentProcess, error) {
+func (r *TmuxRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string, opts *RunOptions) (*AgentProcess, error) {
+	_ = opts
 	if r.session == nil {
 		return nil, errors.New("tmux session is nil")
 	}

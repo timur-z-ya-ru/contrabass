@@ -28,7 +28,7 @@ func TestMockRunner_HandshakeSequence(t *testing.T) {
 		Events:          regular,
 	}
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-1"}, "/tmp", "test")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-1"}, "/tmp", "test", nil)
 	require.NoError(t, err)
 
 	var collected []string
@@ -63,7 +63,7 @@ func TestMockRunner_HandshakeSequence_NoHandshake(t *testing.T) {
 		},
 	}
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-2"}, "/tmp", "test")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-2"}, "/tmp", "test", nil)
 	require.NoError(t, err)
 
 	var collected []string
@@ -86,7 +86,7 @@ func TestMockRunner_StopDelaySimulation(t *testing.T) {
 		StopDelay: stopDelay,
 	}
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-3"}, "/tmp", "test")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-3"}, "/tmp", "test", nil)
 	require.NoError(t, err)
 
 	// Drain first event so goroutine is in the Delay sleep
@@ -121,7 +121,7 @@ func TestMockRunner_StopDelayZeroIsImmediate(t *testing.T) {
 		// StopDelay is zero (default) — stop should be immediate
 	}
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-4"}, "/tmp", "test")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "MOCK-4"}, "/tmp", "test", nil)
 	require.NoError(t, err)
 
 	select {

@@ -30,7 +30,7 @@ func TestTmuxRunner_StartCreatesProcess(t *testing.T) {
 		"tmux kill-pane -t %1":                                            {},
 	})
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-1", Title: "tmux"}, workspace, "run this")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-1", Title: "tmux"}, workspace, "run this", nil)
 	require.NoError(t, err)
 	require.NotNil(t, proc)
 	assert.Equal(t, 1, proc.PID)
@@ -55,7 +55,7 @@ func TestTmuxRunner_StopKillsPaneAndSignalsDone(t *testing.T) {
 		"tmux kill-pane -t %1":                                            {err: killErr},
 	})
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-2"}, workspace, "run this")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-2"}, workspace, "run this", nil)
 	require.NoError(t, err)
 
 	err = runner.Stop(proc)
@@ -86,9 +86,9 @@ func TestTmuxRunner_CloseStopsAllProcesses(t *testing.T) {
 		"tmux kill-pane -t %2":                                            {},
 	})
 
-	proc1, err := runner.Start(context.Background(), types.Issue{ID: "CB-3"}, workspace, "run one")
+	proc1, err := runner.Start(context.Background(), types.Issue{ID: "CB-3"}, workspace, "run one", nil)
 	require.NoError(t, err)
-	proc2, err := runner.Start(context.Background(), types.Issue{ID: "CB-4"}, workspace, "run two")
+	proc2, err := runner.Start(context.Background(), types.Issue{ID: "CB-4"}, workspace, "run two", nil)
 	require.NoError(t, err)
 
 	require.NoError(t, runner.Close())
@@ -105,7 +105,7 @@ func TestTmuxRunner_MonitorDetectsDeadPane(t *testing.T) {
 		"tmux list-panes -t %1 -F #{pane_dead}":                           {output: []byte("1\n")},
 	})
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-5"}, workspace, "run this")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-5"}, workspace, "run this", nil)
 	require.NoError(t, err)
 
 	events := collectOpenCodeEvents(t, proc.Events, proc.Done, 2, 2*time.Second)
@@ -127,7 +127,7 @@ func TestTmuxRunner_StartUnknownAgentType(t *testing.T) {
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 
-	_, err := runner.Start(context.Background(), types.Issue{ID: "CB-6"}, workspace, "run this")
+	_, err := runner.Start(context.Background(), types.Issue{ID: "CB-6"}, workspace, "run this", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown agent type")
 }

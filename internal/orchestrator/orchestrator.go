@@ -332,7 +332,7 @@ func (o *Orchestrator) dispatchIssue(
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	process, err := o.agent.Start(runCtx, issue, workspacePath, prompt)
+	process, err := o.agent.Start(runCtx, issue, workspacePath, prompt, nil)
 	if err != nil {
 		cancel()
 		if cleanupErr := o.workspace.Cleanup(ctx, issue.ID); cleanupErr != nil {

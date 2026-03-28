@@ -174,7 +174,8 @@ func (p *teamCLIProcess) remove(r *teamCLIRunner) {
 	})
 }
 
-func (r *teamCLIRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string) (*AgentProcess, error) {
+func (r *teamCLIRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string, opts *RunOptions) (*AgentProcess, error) {
+	_ = opts
 	if strings.TrimSpace(r.binaryPath) == "" {
 		return nil, fmt.Errorf("%s binary path is empty", r.name)
 	}

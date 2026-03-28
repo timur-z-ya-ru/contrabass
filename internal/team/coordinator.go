@@ -543,7 +543,7 @@ func (c *Coordinator) executeTask(ctx context.Context, task *types.TeamTask, tok
 		}
 	}
 
-	proc, err := c.runner.Start(wCtx, issue, workDir, prompt)
+	proc, err := c.runner.Start(wCtx, issue, workDir, prompt, nil)
 	if err != nil {
 		return fmt.Errorf("start agent: %w", err)
 	}

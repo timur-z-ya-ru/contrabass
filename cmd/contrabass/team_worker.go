@@ -227,7 +227,7 @@ func runTeamWorker(cmd *cobra.Command, args []string) error {
 		Title:      fmt.Sprintf("Team worker task %s", taskID),
 	}
 
-	proc, err := runner.Start(ctx, issue, workDir, prompt)
+	proc, err := runner.Start(ctx, issue, workDir, prompt, nil)
 	if err != nil {
 		setState("failed", taskID)
 		cancel()

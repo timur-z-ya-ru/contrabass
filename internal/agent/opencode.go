@@ -424,7 +424,8 @@ func (r *OpenCodeRunner) Close() error {
 	return closeErr
 }
 
-func (r *OpenCodeRunner) Start(ctx context.Context, _ types.Issue, workspace string, prompt string) (*AgentProcess, error) {
+func (r *OpenCodeRunner) Start(ctx context.Context, _ types.Issue, workspace string, prompt string, opts *RunOptions) (*AgentProcess, error) {
+	_ = opts
 	workDir := workspace
 	if workDir == "" {
 		workDir = r.defaultWorkDir()
