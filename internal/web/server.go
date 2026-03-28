@@ -146,6 +146,9 @@ func (s *Server) newMux() *http.ServeMux {
 	mux.HandleFunc("PATCH /api/v1/board/issues/{identifier}", s.withCORS(s.handleUpdateBoardIssue))
 	mux.HandleFunc("POST /api/v1/refresh", s.withCORS(s.handleRefresh))
 	mux.HandleFunc("GET /api/v1/events", s.withCORS(s.handleSSE))
+	mux.HandleFunc("GET /api/v1/wave/status", s.withCORS(s.handleWaveStatus))
+	mux.HandleFunc("GET /api/v1/wave/health", s.withCORS(s.handleWaveHealth))
+	mux.HandleFunc("GET /api/v1/wave/events", s.withCORS(s.handleWaveEvents))
 	mux.HandleFunc("/api/v1/", s.withCORS(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}))
@@ -202,4 +205,21 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 
 func writeJSONError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (s *Server) handleWaveStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "active",
+		"message": "wave status endpoint ready",
+	})
+}
+
+func (s *Server) handleWaveHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+	})
+}
+
+func (s *Server) handleWaveEvents(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []interface{}{})
 }
