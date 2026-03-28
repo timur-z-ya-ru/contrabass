@@ -345,6 +345,26 @@ func (m *Manager) AutoPromoteIfNeeded(ctx context.Context, issues []types.Issue)
 	return nil
 }
 
+// ForcePromoteNext promotes the next wave regardless of current wave completion status.
+// Used by `wave promote --force` to bypass completion checks.
+func (m *Manager) ForcePromoteNext(ctx context.Context, issues []types.Issue) ([]string, error) {
+	nextWave := m.findNextWave()
+	if nextWave == nil {
+		// No next wave — try current wave (might not have labels yet)
+		currentWave := m.findCurrentWave()
+		if currentWave == nil {
+			return nil, nil
+		}
+		nextWave = currentWave
+	}
+
+	allIssues := make(map[string]types.Issue, len(issues))
+	for _, issue := range issues {
+		allIssues[issue.ID] = issue
+	}
+	return m.promoter.PromoteWave(ctx, *nextWave, allIssues)
+}
+
 // ResolveModel returns the model override for the given issue based on routing rules.
 func (m *Manager) ResolveModel(issue types.Issue) string {
 	return m.promoter.ResolveModel(issue)

@@ -189,6 +189,7 @@ func runWaveReconcile(cmd *cobra.Command, _ []string) error {
 
 func runWavePromote(cmd *cobra.Command, _ []string) error {
 	cfgPath, _ := cmd.Flags().GetString("config")
+	force, _ := cmd.Flags().GetBool("force")
 
 	cfg, err := wave.ParseConfig(cfgPath)
 	if err != nil {
@@ -232,8 +233,20 @@ func runWavePromote(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("refresh: %w", err)
 	}
 
-	if err := mgr.AutoPromoteIfNeeded(ctx, issues); err != nil {
-		return fmt.Errorf("promote: %w", err)
+	if force {
+		promoted, err := mgr.ForcePromoteNext(ctx, issues)
+		if err != nil {
+			return fmt.Errorf("force promote: %w", err)
+		}
+		if len(promoted) == 0 {
+			fmt.Println("No waves to promote.")
+		} else {
+			fmt.Printf("Force-promoted %d issues: %v\n", len(promoted), promoted)
+		}
+	} else {
+		if err := mgr.AutoPromoteIfNeeded(ctx, issues); err != nil {
+			return fmt.Errorf("promote: %w", err)
+		}
 	}
 
 	fmt.Println("Wave promotion complete.")
