@@ -87,7 +87,8 @@ func NewCodexRunner(binaryPath string, timeout time.Duration) *CodexRunner {
 	}
 }
 
-func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string) (*AgentProcess, error) {
+func (r *CodexRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string, opts *RunOptions) (*AgentProcess, error) {
+	_ = opts
 	argv := strings.Fields(strings.TrimSpace(r.binaryPath))
 	if len(argv) == 0 {
 		return nil, errors.New("codex binary path is empty")

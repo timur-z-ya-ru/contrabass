@@ -1,0 +1,22 @@
+repo: test/repo
+phases:
+  - name: "Phase 1: Test"
+    waves:
+      - issues: ["1", "2"]
+        description: "Foundation"
+      - issues: ["3"]
+        description: "Features"
+model_routing:
+  default_label: agent-ready
+  heavy_label: agent-ready-heavy
+  default_model: claude-sonnet-4-6
+  rules:
+    - labels: [frontend]
+      model: claude-opus-4-6
+      heavy: true
+stall_detection:
+  max_age_minutes: 45
+  max_retries: 3
+verification:
+  propagation_delay: 2
+  require_merged_pr: true

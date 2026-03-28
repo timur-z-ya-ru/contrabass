@@ -9,6 +9,9 @@ import { TeamTable } from './components/TeamTable'
 import { WorkerTable } from './components/WorkerTable'
 import { BoardView } from './components/BoardView'
 import { AgentLogs } from './components/AgentLogs'
+import { WavePipeline } from './components/WavePipeline'
+import { DependencyGraph } from './components/DependencyGraph'
+import { WaveTimeline } from './components/WaveTimeline'
 import { useSSE } from './hooks/useSSE'
 
 function computeRuntimeSeconds(startTime: string | undefined): number {
@@ -82,6 +85,21 @@ function App() {
       ) : null}
 
       <MetricCards stats={state.stats} backoffCount={(state.backoff ?? []).length} />
+
+      <div className="dashboard__wave-section">
+        <section className="dashboard__section">
+          <h2 className="dashboard__section-label">Wave Pipeline</h2>
+          <WavePipeline />
+        </section>
+        <div className="dashboard__wave-details">
+          <section className="dashboard__section">
+            <DependencyGraph />
+          </section>
+          <section className="dashboard__section">
+            <WaveTimeline />
+          </section>
+        </div>
+      </div>
 
       <div className="dashboard__grid">
         <div className="dashboard__primary">

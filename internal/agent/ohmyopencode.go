@@ -110,8 +110,8 @@ func (r *OhMyOpenCodeRunner) buildEnv() []string {
 	return env
 }
 
-func (r *OhMyOpenCodeRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string) (*AgentProcess, error) {
-	return r.inner.Start(ctx, issue, workspace, prompt)
+func (r *OhMyOpenCodeRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string, opts *RunOptions) (*AgentProcess, error) {
+	return r.inner.Start(ctx, issue, workspace, prompt, opts)
 }
 
 func (r *OhMyOpenCodeRunner) Stop(proc *AgentProcess) error {

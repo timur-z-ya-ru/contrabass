@@ -28,6 +28,16 @@ func (t EventType) String() string {
 		return "BackoffEnqueued"
 	case EventIssueReleased:
 		return "IssueReleased"
+	case EventWavePromoted:
+		return "WavePromoted"
+	case EventWaveCompleted:
+		return "WaveCompleted"
+	case EventPhaseCompleted:
+		return "PhaseCompleted"
+	case EventPipelineDone:
+		return "PipelineDone"
+	case EventWaveStall:
+		return "WaveStall"
 	default:
 		return "Unknown"
 	}
@@ -90,3 +100,41 @@ type IssueReleased struct {
 }
 
 func (IssueReleased) eventPayload() {}
+
+const (
+	EventWavePromoted   EventType = 100
+	EventWaveCompleted  EventType = 101
+	EventPhaseCompleted EventType = 102
+	EventPipelineDone   EventType = 103
+	EventWaveStall      EventType = 104
+)
+
+type WavePromoted struct {
+	IssueID string
+	Phase   int
+	Wave    int
+	Issues  []string
+}
+
+func (WavePromoted) eventPayload() {}
+
+type WaveCompleted struct {
+	Phase int
+	Wave  int
+}
+
+func (WaveCompleted) eventPayload() {}
+
+type PhaseCompleted struct {
+	Phase int
+}
+
+func (PhaseCompleted) eventPayload() {}
+
+type WaveStallPayload struct {
+	Phase  int
+	Wave   int
+	Issues []string
+}
+
+func (WaveStallPayload) eventPayload() {}

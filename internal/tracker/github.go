@@ -218,6 +218,107 @@ func (c *GitHubClient) PostComment(ctx context.Context, issueID string, body str
 	return nil
 }
 
+// AddLabel adds a label to the given issue.
+func (c *GitHubClient) AddLabel(ctx context.Context, issueID string, label string) error {
+	payload := map[string][]string{
+		"labels": {label},
+	}
+
+	path := fmt.Sprintf("/repos/%s/%s/issues/%s/labels", c.owner, c.repo, issueID)
+	_, _, statusCode, err := c.doRequestWithStatus(ctx, http.MethodPost, path, payload)
+	if err != nil {
+		return err
+	}
+
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("github API error: expected status 200, got %d", statusCode)
+	}
+
+	return nil
+}
+
+// RemoveLabel removes a label from the given issue. A 404 response is treated as success.
+func (c *GitHubClient) RemoveLabel(ctx context.Context, issueID string, label string) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%s/labels/%s", c.owner, c.repo, issueID, url.PathEscape(label))
+	_, _, statusCode, err := c.doRequestWithStatus(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		// 404 means label was not present — treat as success
+		if statusCode == http.StatusNotFound {
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}
+
+type githubTimelineEvent struct {
+	Event     string      `json:"event"`
+	Source    *githubSource `json:"source"`
+}
+
+type githubSource struct {
+	Type        string      `json:"type"`
+	Issue       *githubCrossReferencedIssue `json:"issue"`
+}
+
+type githubCrossReferencedIssue struct {
+	PullRequest *githubPRMergedAt `json:"pull_request"`
+}
+
+type githubPRMergedAt struct {
+	MergedAt *string `json:"merged_at"`
+}
+
+// HasMergedPR returns true if the issue has a cross-referenced merged pull request in its timeline.
+func (c *GitHubClient) HasMergedPR(ctx context.Context, issueID string) (bool, error) {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%s/timeline", c.owner, c.repo, issueID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+path, nil)
+	if err != nil {
+		return false, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	req.Header.Set("Accept", "application/vnd.github.mockingbird-preview+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("github API error (status %d): %s", resp.StatusCode, truncateBody(respBody))
+	}
+
+	var events []githubTimelineEvent
+	if err := json.Unmarshal(respBody, &events); err != nil {
+		return false, fmt.Errorf("parsing timeline response: %w", err)
+	}
+
+	for _, event := range events {
+		if event.Event != "cross-referenced" {
+			continue
+		}
+		if event.Source == nil || event.Source.Issue == nil {
+			continue
+		}
+		pr := event.Source.Issue.PullRequest
+		if pr != nil && pr.MergedAt != nil && *pr.MergedAt != "" {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 func (c *GitHubClient) doRequest(ctx context.Context, method string, path string, body interface{}) ([]byte, http.Header, error) {
 	respBody, headers, _, err := c.doRequestWithStatus(ctx, method, path, body)
 	return respBody, headers, err

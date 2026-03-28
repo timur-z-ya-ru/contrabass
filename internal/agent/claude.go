@@ -68,7 +68,7 @@ func NewClaudeRunner(cfg ClaudeConfig) *ClaudeRunner {
 	}
 }
 
-func (r *ClaudeRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string) (*AgentProcess, error) {
+func (r *ClaudeRunner) Start(ctx context.Context, issue types.Issue, workspace string, prompt string, opts *RunOptions) (*AgentProcess, error) {
 	args := []string{
 		"--print",
 		"--output-format", "stream-json",
@@ -79,11 +79,20 @@ func (r *ClaudeRunner) Start(ctx context.Context, issue types.Issue, workspace s
 		"--settings", `{"enabledPlugins":{},"hooks":{}}`,
 	}
 
-	if r.model != "" {
-		args = append(args, "--model", r.model)
+	model := r.model
+	if opts != nil && opts.ModelOverride != "" {
+		model = opts.ModelOverride
 	}
-	if r.maxTurns > 0 {
-		args = append(args, "--max-turns", strconv.Itoa(r.maxTurns))
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+
+	maxTurns := r.maxTurns
+	if opts != nil && opts.MaxTurns > 0 {
+		maxTurns = opts.MaxTurns
+	}
+	if maxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(maxTurns))
 	}
 
 	// Write prompt to temp file to avoid arg length limits

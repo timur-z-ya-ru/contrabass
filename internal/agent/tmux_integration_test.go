@@ -118,7 +118,7 @@ func TestTmuxRunner_IntegrationPipeline(t *testing.T) {
 
 			procs := make([]*agent.AgentProcess, 0, tt.processCount)
 			for i := range tt.processCount {
-				proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-INT-" + strconv.Itoa(i+1)}, workspace, "execute integration task")
+				proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-INT-" + strconv.Itoa(i+1)}, workspace, "execute integration task", nil)
 				require.NoError(t, err)
 				procs = append(procs, proc)
 			}

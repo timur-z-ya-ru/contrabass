@@ -243,7 +243,7 @@ func (s *stubWorkspace) CleanupAll(_ context.Context) error                     
 
 type stubAgentRunner struct{}
 
-func (s *stubAgentRunner) Start(_ context.Context, _ types.Issue, _, _ string) (*agent.AgentProcess, error) {
+func (s *stubAgentRunner) Start(_ context.Context, _ types.Issue, _, _ string, _ *agent.RunOptions) (*agent.AgentProcess, error) {
 	return nil, nil
 }
 func (s *stubAgentRunner) Stop(_ *agent.AgentProcess) error { return nil }

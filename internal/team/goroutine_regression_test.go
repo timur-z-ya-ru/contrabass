@@ -40,7 +40,7 @@ type mockStartCall struct {
 	Prompt  string
 }
 
-func (m *mockAgentRunner) Start(ctx context.Context, issue types.Issue, workDir, prompt string) (*agent.AgentProcess, error) {
+func (m *mockAgentRunner) Start(ctx context.Context, issue types.Issue, workDir, prompt string, _ *agent.RunOptions) (*agent.AgentProcess, error) {
 	active := atomic.AddInt32(&m.active, 1)
 	for {
 		max := atomic.LoadInt32(&m.maxActive)

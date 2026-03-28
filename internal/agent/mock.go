@@ -17,12 +17,14 @@ type MockRunner struct {
 	DoneErr         error
 	Delay           time.Duration
 	StopDelay       time.Duration // optional: delay before Stop completes
+	LastOpts        *RunOptions
 	pidSeq          int64
 	mu              sync.Mutex
 	stops           map[int]chan struct{}
 }
 
-func (m *MockRunner) Start(ctx context.Context, _ types.Issue, _ string, _ string) (*AgentProcess, error) {
+func (m *MockRunner) Start(ctx context.Context, _ types.Issue, _ string, _ string, opts *RunOptions) (*AgentProcess, error) {
+	m.LastOpts = opts
 	if m.StartErr != nil {
 		return nil, m.StartErr
 	}

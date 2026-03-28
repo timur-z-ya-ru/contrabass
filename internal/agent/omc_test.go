@@ -40,7 +40,7 @@ func TestOMCRunner_UsesTeamRuntime(t *testing.T) {
 	}
 	runner := NewOMCRunner(cfg, time.Second)
 
-	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-104", Title: "Add OMC runner"}, workspace, "Do the OMC task")
+	proc, err := runner.Start(context.Background(), types.Issue{ID: "CB-104", Title: "Add OMC runner"}, workspace, "Do the OMC task", nil)
 	require.NoError(t, err)
 
 	events := collectOpenCodeEvents(t, proc.Events, proc.Done, 4, 5*time.Second)

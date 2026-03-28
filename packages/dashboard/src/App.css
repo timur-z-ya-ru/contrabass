@@ -33,6 +33,17 @@
   font-size: 0.8125rem;
 }
 
+.dashboard__wave-section {
+  margin-bottom: var(--space-xl);
+}
+
+.dashboard__wave-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xl);
+  margin-top: var(--space-md);
+}
+
 .dashboard__grid {
   display: grid;
   grid-template-columns: 5fr 3fr;

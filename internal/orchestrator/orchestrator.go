@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,9 +14,11 @@ import (
 
 	"github.com/junhoyeo/contrabass/internal/agent"
 	"github.com/junhoyeo/contrabass/internal/config"
+	"github.com/junhoyeo/contrabass/internal/loadmon"
 	"github.com/junhoyeo/contrabass/internal/logging"
 	"github.com/junhoyeo/contrabass/internal/tracker"
 	"github.com/junhoyeo/contrabass/internal/types"
+	"github.com/junhoyeo/contrabass/internal/wave"
 )
 
 const defaultEventBufferSize = 256
@@ -55,6 +59,9 @@ type Orchestrator struct {
 	config    ConfigProvider
 	logger    *log.Logger
 
+	wave   *wave.Manager
+	waveWg sync.WaitGroup
+
 	mu           sync.Mutex
 	shutdownOnce sync.Once
 	running      map[string]*runEntry
@@ -65,6 +72,10 @@ type Orchestrator struct {
 
 	issueCache      map[string]types.Issue
 	issueCacheOrder []string
+
+	stateBasePath string // base directory for .contrabass/state.json; empty = cwd
+
+	loadMonitor *loadmon.Monitor // adaptive concurrency; nil = static mode
 }
 
 type runSignal struct {
@@ -107,13 +118,47 @@ func NewOrchestrator(
 	}
 }
 
+func (o *Orchestrator) SetWaveManager(wm *wave.Manager) {
+	o.wave = wm
+}
+
+func effectiveMaxTurns(base int, attempt int) int {
+	if base <= 0 {
+		base = 100
+	}
+	switch attempt {
+	case 1:
+		return base
+	case 2:
+		return base * 7 / 10
+	default:
+		return base / 2
+	}
+}
+
 func (o *Orchestrator) Events() <-chan OrchestratorEvent {
 	return o.events
+}
+
+// SetLoadMonitor enables adaptive concurrency control.
+func (o *Orchestrator) SetLoadMonitor(m *loadmon.Monitor) {
+	o.loadMonitor = m
 }
 
 func (o *Orchestrator) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("context is nil")
+	}
+
+	// Restore backoff queue from previous run.
+	if err := o.LoadState(); err != nil {
+		o.logger.Printf("persistence: load failed (non-fatal): %v", err)
+	}
+
+	// Start adaptive load monitor if configured.
+	if o.loadMonitor != nil {
+		o.loadMonitor.Start()
+		defer o.loadMonitor.Stop()
 	}
 
 	pollInterval := time.Duration(o.currentConfig().PollIntervalMs()) * time.Millisecond
@@ -170,6 +215,16 @@ func (o *Orchestrator) runCycle(ctx context.Context, supervisor *errgroup.Group,
 
 	issues, err := o.tracker.FetchIssues(ctx)
 	if err != nil {
+		// Pause on rate limit instead of burning cycles.
+		var rlErr *tracker.RateLimitError
+		if errors.As(err, &rlErr) && rlErr.RetryAfter > 0 {
+			logging.LogOrchestratorEvent(o.logger, "rate_limited", "retry_after", rlErr.RetryAfter)
+			select {
+			case <-ctx.Done():
+			case <-time.After(rlErr.RetryAfter):
+			}
+			return
+		}
 		logging.LogOrchestratorEvent(o.logger, "fetch_issues_failed", "err", err)
 		o.emitStatusUpdate()
 		return
@@ -186,8 +241,23 @@ func (o *Orchestrator) runCycle(ctx context.Context, supervisor *errgroup.Group,
 	}
 	o.mu.Unlock()
 
+	if o.wave != nil {
+		if err := o.wave.Refresh(issues); err != nil {
+			logging.LogOrchestratorEvent(o.logger, "wave_refresh_failed", "err", err)
+		}
+		// Auto-promote current wave if no issues have agent-ready labels
+		if err := o.wave.AutoPromoteIfNeeded(ctx, issues); err != nil {
+			o.logger.Warn("wave auto-promote failed", "err", err)
+		}
+	}
+
 	o.dispatchReadyBackoff(ctx, supervisorCtxOr(ctx), cfg, issuesByID, supervisor, runSignals)
-	o.dispatchUnclaimedIssues(ctx, supervisorCtxOr(ctx), cfg, issues, supervisor, runSignals)
+
+	dispatchIssues := issues
+	if o.wave != nil {
+		dispatchIssues = o.wave.FilterDispatchable(ctx, issues)
+	}
+	o.dispatchUnclaimedIssues(ctx, supervisorCtxOr(ctx), cfg, dispatchIssues, supervisor, runSignals)
 	o.emitStatusUpdate()
 }
 
@@ -305,10 +375,53 @@ func (o *Orchestrator) dispatchIssue(
 	}
 	runAttempt.WorkspacePath = workspacePath
 
+	// P6: fail-fast hook
+	if hook := cfg.HookBeforeRun(); hook != "" {
+		cmd := exec.CommandContext(ctx, "sh", "-c", hook)
+		cmd.Dir = workspacePath
+		if err := cmd.Run(); err != nil {
+			logging.LogIssueEvent(o.logger, issue.ID, "preflight_failed", "hook", hook, "err", err)
+			if cleanupErr := o.workspace.Cleanup(ctx, issue.ID); cleanupErr != nil {
+				logging.LogIssueEvent(o.logger, issue.ID, "workspace_cleanup_failed", "stage", "preflight", "err", cleanupErr)
+			}
+			o.enqueueContinuation(issue.ID, attemptNumber, "preflight: "+err.Error())
+			return
+		}
+	}
+
 	if phaseErr := TransitionRunPhase(runAttempt.Phase, types.BuildingPrompt); phaseErr == nil {
 		runAttempt.Phase = types.BuildingPrompt
 	} else {
 		logging.LogIssueEvent(o.logger, issue.ID, "phase_transition_failed", "from", runAttempt.Phase.String(), "to", types.BuildingPrompt.String(), "err", phaseErr)
+	}
+
+	// Build RunOptions from wave manager
+	var opts *agent.RunOptions
+	if o.wave != nil {
+		maxTurns := cfg.ClaudeMaxTurns()
+		opts = &agent.RunOptions{
+			MaxTurns:      effectiveMaxTurns(maxTurns, attemptNumber),
+			ModelOverride: resolveModelWithFallback(issue, o.wave),
+			Attempt:       attemptNumber,
+			IsRetry:       attemptNumber > 1,
+		}
+	}
+
+	// P2: inject retry context into issue description
+	if opts != nil && opts.IsRetry {
+		o.mu.Lock()
+		for _, b := range o.backoff {
+			if b.IssueID == issue.ID {
+				opts.PrevError = b.Error
+				break
+			}
+		}
+		o.mu.Unlock()
+
+		retryBlock := fmt.Sprintf(
+			"\n\n## RETRY CONTEXT — Attempt %d\n\nPrevious attempt failed.\nError: %s\n\nIMPORTANT: Try a DIFFERENT approach.\n",
+			opts.Attempt, opts.PrevError)
+		issue.Description = issue.Description + retryBlock
 	}
 
 	prompt, err := config.RenderPrompt(cfg.PromptTemplate, issue)
@@ -332,7 +445,7 @@ func (o *Orchestrator) dispatchIssue(
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	process, err := o.agent.Start(runCtx, issue, workspacePath, prompt)
+	process, err := o.agent.Start(runCtx, issue, workspacePath, prompt, opts)
 	if err != nil {
 		cancel()
 		if cleanupErr := o.workspace.Cleanup(ctx, issue.ID); cleanupErr != nil {
@@ -462,6 +575,18 @@ func (o *Orchestrator) sendRunSignal(ctx context.Context, runSignals chan<- runS
 	case runSignals <- signal:
 		return true
 	}
+}
+
+// resolveModelWithFallback returns the model override for the given issue.
+// Issue body ModelOverride takes precedence over wave label-based routing.
+func resolveModelWithFallback(issue types.Issue, wm *wave.Manager) string {
+	if issue.ModelOverride != "" {
+		return issue.ModelOverride
+	}
+	if wm != nil {
+		return wm.ResolveModel(issue)
+	}
+	return ""
 }
 
 // putIssueCacheLocked inserts or updates an entry in the issue cache.
