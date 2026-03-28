@@ -10,6 +10,7 @@ import (
 	"github.com/junhoyeo/contrabass/internal/config"
 	"github.com/junhoyeo/contrabass/internal/logging"
 	"github.com/junhoyeo/contrabass/internal/types"
+	"github.com/junhoyeo/contrabass/internal/wave"
 )
 
 func (o *Orchestrator) handleRunSignal(ctx context.Context, signal runSignal) {
@@ -110,6 +111,30 @@ func (o *Orchestrator) completeRun(ctx context.Context, issueID string, doneErr 
 	// Post completion: push branch and create PR before workspace cleanup
 	if finalAttempt.Phase == types.Succeeded {
 		o.postCompletionPushAndPR(ctx, entry.workspace, entry.issue)
+
+		// Wave notification (non-blocking)
+		if o.wave != nil {
+			resultCh := o.wave.OnIssueCompleted(ctx, issueID)
+			o.waveWg.Add(1)
+			go func() {
+				defer o.waveWg.Done()
+				result := <-resultCh
+				if result.Err != nil {
+					o.logger.Warn("wave promotion failed", "issue_id", issueID, "err", result.Err)
+					return
+				}
+				for _, id := range result.Promoted {
+					o.emitEvent(OrchestratorEvent{
+						Type:      EventWavePromoted,
+						IssueID:   id,
+						Timestamp: time.Now(),
+						Data:      WavePromoted{IssueID: id},
+					})
+				}
+			}()
+			// P8: Token tracking
+			o.wave.UpdateTokens(issueID, finalAttempt.TokensIn, finalAttempt.TokensOut)
+		}
 	}
 
 	// Cleanup workspace (removes git worktree)
@@ -145,6 +170,28 @@ func (o *Orchestrator) completeRun(ctx context.Context, issueID string, doneErr 
 		"status", finalAttempt.Phase.String(),
 		"err", finalAttempt.Error,
 	)
+
+	// P1+P9: Stall-retry bridge
+	if o.wave != nil {
+		action := o.wave.CheckIssueStall(wave.RunInfo{
+			StartTime:   entry.attempt.StartTime,
+			LastEventAt: entry.lastEventAt,
+			Phase:       finalAttempt.Phase,
+			Attempt:     finalAttempt.Attempt,
+		})
+		if action == wave.Escalate {
+			o.wave.EscalateIssue(ctx, issueID)
+			o.tracker.PostComment(ctx, issueID, fmt.Sprintf(
+				"Agent escalated: phase=%s attempt=%d error=%q",
+				finalAttempt.Phase, finalAttempt.Attempt, finalAttempt.Error))
+			o.releaseIssue(ctx, issueID, types.Running, finalAttempt.Attempt)
+			// Token tracking even on escalation
+			o.wave.UpdateTokens(issueID, finalAttempt.TokensIn, finalAttempt.TokensOut)
+			return
+		}
+		// Token tracking on retry
+		o.wave.UpdateTokens(issueID, finalAttempt.TokensIn, finalAttempt.TokensOut)
+	}
 
 	o.enqueueBackoffFromRunResult(ctx, entry.issue, finalAttempt)
 }
@@ -587,6 +634,9 @@ func (o *Orchestrator) gracefulShutdown(ctx context.Context) error {
 				logging.LogIssueEvent(o.logger, run.issue.ID, "shutdown_release_failed", "err", err)
 			}
 		}
+
+		// Wait for any in-flight wave promotions to finish.
+		o.waveWg.Wait()
 
 		if err := o.workspace.CleanupAll(ctx); err != nil {
 			cleanupAllErr = err

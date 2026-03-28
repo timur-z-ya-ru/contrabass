@@ -290,6 +290,11 @@ func (m *Manager) UpdateTokens(issueID string, tokensIn, tokensOut int64) {
 	node.Attempts++
 }
 
+// ResolveModel returns the model override for the given issue based on routing rules.
+func (m *Manager) ResolveModel(issue types.Issue) string {
+	return m.promoter.ResolveModel(issue)
+}
+
 // --- helper methods ---
 
 // waveIndex returns the wave index for issueID in the pipeline, or -1 if not found.
