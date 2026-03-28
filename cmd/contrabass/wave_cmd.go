@@ -42,6 +42,7 @@ var wavePromoteCmd = &cobra.Command{
 
 func init() {
 	waveStatusCmd.Flags().String("config", "wave-config.yaml", "path to wave-config.yaml")
+	waveHealthCmd.Flags().String("config", "wave-config.yaml", "path to wave-config.yaml")
 	waveReconcileCmd.Flags().String("config", "wave-config.yaml", "path to wave-config.yaml")
 	waveReconcileCmd.Flags().Bool("apply", false, "apply changes (default: dry-run)")
 
