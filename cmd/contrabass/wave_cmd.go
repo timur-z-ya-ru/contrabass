@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/junhoyeo/contrabass/internal/tracker"
 	"github.com/junhoyeo/contrabass/internal/wave"
 )
 
@@ -36,7 +39,7 @@ var waveReconcileCmd = &cobra.Command{
 
 var wavePromoteCmd = &cobra.Command{
 	Use:   "promote",
-	Short: "Promote the next wave (stub)",
+	Short: "Promote the next wave by applying agent-ready labels",
 	RunE:  runWavePromote,
 }
 
@@ -45,6 +48,8 @@ func init() {
 	waveHealthCmd.Flags().String("config", "wave-config.yaml", "path to wave-config.yaml")
 	waveReconcileCmd.Flags().String("config", "wave-config.yaml", "path to wave-config.yaml")
 	waveReconcileCmd.Flags().Bool("apply", false, "apply changes (default: dry-run)")
+	wavePromoteCmd.Flags().String("config", "wave-config.yaml", "path to wave-config.yaml")
+	wavePromoteCmd.Flags().Bool("force", false, "force promotion even if wave is not complete")
 
 	waveCmd.AddCommand(waveStatusCmd, waveHealthCmd, waveReconcileCmd, wavePromoteCmd)
 }
@@ -112,36 +117,124 @@ func runWaveReconcile(cmd *cobra.Command, _ []string) error {
 
 	cfg, err := wave.ParseConfig(cfgPath)
 	if err != nil {
-		return fmt.Errorf("parsing wave config: %w", err)
+		return fmt.Errorf("parse config: %w", err)
 	}
-
-	mode := "dry-run"
-	if apply {
-		mode = "apply"
-	}
-
 	if cfg == nil {
-		fmt.Printf("[%s] No wave-config.yaml found. Nothing to reconcile.\n", mode)
+		fmt.Println("No wave-config.yaml found.")
 		return nil
 	}
 
-	fmt.Printf("[%s] Reconciling wave pipeline\n", mode)
-	for _, phase := range cfg.Phases {
-		for j, w := range phase.Waves {
-			fmt.Printf("  Phase %q wave %d: %d issue(s)\n", phase.Name, j, len(w.Issues))
-			for _, id := range w.Issues {
-				fmt.Printf("    - %s\n", id)
-			}
+	if len(cfg.Phases) == 0 || len(cfg.Phases[0].Waves) == 0 {
+		fmt.Println("No phases/waves defined in config.")
+		return nil
+	}
+
+	wave0 := cfg.Phases[0].Waves[0]
+	defaultLabel := cfg.ModelRouting.DefaultLabel
+	if defaultLabel == "" {
+		defaultLabel = "agent-ready"
+	}
+
+	fmt.Printf("Wave config: %s\n", cfg.Repo)
+	fmt.Printf("Wave 0 issues: %v\n", wave0.Issues)
+	fmt.Printf("Label to apply: %s\n", defaultLabel)
+
+	if !apply {
+		fmt.Println("\nDry-run mode. Actions that would be taken:")
+		for _, issueID := range wave0.Issues {
+			fmt.Printf("  - Add label %q to issue #%s\n", defaultLabel, issueID)
+		}
+		fmt.Println("\nRun with --apply to execute.")
+		return nil
+	}
+
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return fmt.Errorf("GITHUB_TOKEN not set — required for --apply")
+	}
+
+	parts := strings.SplitN(cfg.Repo, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid repo format in config: %q (expected owner/repo)", cfg.Repo)
+	}
+
+	githubClient, err := tracker.NewGitHubClient(tracker.GitHubConfig{
+		APIToken: token,
+		Owner:    parts[0],
+		Repo:     parts[1],
+	})
+	if err != nil {
+		return fmt.Errorf("creating github client: %w", err)
+	}
+
+	lm, ok := tracker.Tracker(githubClient).(tracker.LabelManager)
+	if !ok {
+		return fmt.Errorf("github client does not support label management")
+	}
+
+	ctx := context.Background()
+	for _, issueID := range wave0.Issues {
+		fmt.Printf("  Adding label %q to issue #%s... ", defaultLabel, issueID)
+		if err := lm.AddLabel(ctx, issueID, defaultLabel); err != nil {
+			fmt.Printf("FAILED: %v\n", err)
+		} else {
+			fmt.Printf("OK\n")
 		}
 	}
 
-	if !apply {
-		fmt.Println("\nRun with --apply to apply changes.")
-	}
+	fmt.Println("\nReconcile complete.")
 	return nil
 }
 
-func runWavePromote(_ *cobra.Command, _ []string) error {
-	fmt.Println("wave promote: not yet implemented")
+func runWavePromote(cmd *cobra.Command, _ []string) error {
+	cfgPath, _ := cmd.Flags().GetString("config")
+
+	cfg, err := wave.ParseConfig(cfgPath)
+	if err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	if cfg == nil {
+		fmt.Println("No wave-config.yaml found.")
+		return nil
+	}
+
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return fmt.Errorf("GITHUB_TOKEN not set")
+	}
+
+	parts := strings.SplitN(cfg.Repo, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid repo format: %q", cfg.Repo)
+	}
+
+	githubClient, err := tracker.NewGitHubClient(tracker.GitHubConfig{
+		APIToken: token,
+		Owner:    parts[0],
+		Repo:     parts[1],
+	})
+	if err != nil {
+		return err
+	}
+
+	mgr, err := wave.NewManager(githubClient, cfgPath, nil)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	issues, err := githubClient.FetchIssues(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch issues: %w", err)
+	}
+	if err := mgr.Refresh(issues); err != nil {
+		return fmt.Errorf("refresh: %w", err)
+	}
+
+	if err := mgr.AutoPromoteIfNeeded(ctx, issues); err != nil {
+		return fmt.Errorf("promote: %w", err)
+	}
+
+	fmt.Println("Wave promotion complete.")
 	return nil
 }
