@@ -630,12 +630,29 @@ func (o *Orchestrator) gracefulShutdown(ctx context.Context) error {
 			if err := o.workspace.Cleanup(ctx, run.issue.ID); err != nil {
 				logging.LogIssueEvent(o.logger, run.issue.ID, "shutdown_cleanup_failed", "err", err)
 			}
-			if err := o.tracker.UpdateIssueState(ctx, run.issue.ID, types.Released); err != nil {
-				logging.LogIssueEvent(o.logger, run.issue.ID, "shutdown_update_released_failed", "err", err)
+			// Use RetryQueued to keep issue OPEN on GitHub so it can be
+			// rediscovered after restart (Released closes the issue).
+			if err := o.tracker.UpdateIssueState(ctx, run.issue.ID, types.RetryQueued); err != nil {
+				logging.LogIssueEvent(o.logger, run.issue.ID, "shutdown_update_retry_queued_failed", "err", err)
 			}
 			if err := o.tracker.ReleaseIssue(ctx, run.issue.ID); err != nil {
 				logging.LogIssueEvent(o.logger, run.issue.ID, "shutdown_release_failed", "err", err)
 			}
+
+			// Enqueue interrupted runs into backoff for persistence.
+			o.mu.Lock()
+			o.backoff = upsertBackoff(o.backoff, types.BackoffEntry{
+				IssueID: run.issue.ID,
+				Attempt: run.attempt.Attempt,
+				RetryAt: time.Now(),
+				Error:   "interrupted by shutdown",
+			})
+			o.mu.Unlock()
+		}
+
+		// Persist backoff queue so it survives restart.
+		if err := o.SaveState(); err != nil {
+			logging.LogOrchestratorEvent(o.logger, "save_state_failed", "err", err)
 		}
 
 		// Wait for any in-flight wave promotions to finish.

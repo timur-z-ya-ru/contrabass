@@ -71,6 +71,8 @@ type Orchestrator struct {
 
 	issueCache      map[string]types.Issue
 	issueCacheOrder []string
+
+	stateBasePath string // base directory for .contrabass/state.json; empty = cwd
 }
 
 type runSignal struct {
@@ -138,6 +140,11 @@ func (o *Orchestrator) Events() <-chan OrchestratorEvent {
 func (o *Orchestrator) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("context is nil")
+	}
+
+	// Restore backoff queue from previous run.
+	if err := o.LoadState(); err != nil {
+		o.logger.Printf("persistence: load failed (non-fatal): %v", err)
 	}
 
 	pollInterval := time.Duration(o.currentConfig().PollIntervalMs()) * time.Millisecond

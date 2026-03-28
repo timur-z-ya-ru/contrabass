@@ -20,6 +20,15 @@ import (
 	"time"
 )
 
+// newTestOrchestrator wraps NewOrchestrator and isolates state persistence
+// to a test-specific temp directory so tests don't leak state to each other.
+func newTestOrchestrator(t *testing.T, tr tracker.Tracker, ws WorkspaceManager, ar agent.AgentRunner, cp ConfigProvider, logger *log.Logger) *Orchestrator {
+	t.Helper()
+	orch := NewOrchestrator(tr, ws, ar, cp, logger)
+	orch.stateBasePath = t.TempDir()
+	return orch
+}
+
 type staticConfig struct{ cfg *config.WorkflowConfig }
 
 func (s *staticConfig) GetConfig() *config.WorkflowConfig { return s.cfg }
@@ -423,7 +432,7 @@ func TestPollAndDispatch(t *testing.T) {
 		Delay:  10 * time.Millisecond,
 	}
 	cfg := &staticConfig{cfg: testConfig()}
-	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, cfg, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -456,7 +465,7 @@ func TestConcurrencyBounded(t *testing.T) {
 
 	workflowCfg := testConfig()
 	workflowCfg.MaxConcurrencyRaw = 1
-	orch := NewOrchestrator(mt, mw, runner, &staticConfig{cfg: workflowCfg}, nil)
+	orch := newTestOrchestrator(t,mt, mw, runner, &staticConfig{cfg: workflowCfg}, nil)
 	go func() {
 		for range orch.Events() {
 		}
@@ -488,7 +497,7 @@ func TestSuccessfulAgentReleases(t *testing.T) {
 		Delay:  10 * time.Millisecond,
 	}
 	cfg := &staticConfig{cfg: testConfig()}
-	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, cfg, nil)
 	go func() {
 		for range orch.Events() {
 		}
@@ -517,7 +526,7 @@ func TestNoEventSuccessResolvesToSucceeded(t *testing.T) {
 	mt := newObservingTracker([]types.Issue{{ID: "ISS-1", Title: "Test", State: types.Unclaimed}})
 	mw := workspace.NewMockManager(t.TempDir())
 	mr := &agent.MockRunner{}
-	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -550,7 +559,7 @@ func TestFailedAgentBackoff(t *testing.T) {
 
 	workflowCfg := testConfig()
 	workflowCfg.MaxRetryBackoffMsRaw = 5_000
-	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: workflowCfg}, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: workflowCfg}, nil)
 	go func() {
 		for range orch.Events() {
 		}
@@ -599,7 +608,7 @@ func TestOrchestrator_FollowUpTurnContinuation(t *testing.T) {
 
 		workflowCfg := testConfig()
 		workflowCfg.MaxRetryBackoffMsRaw = 5_000
-		orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: workflowCfg}, nil)
+		orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: workflowCfg}, nil)
 		events := newEventCollector(orch.Events())
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -651,7 +660,7 @@ func TestContextCancellation(t *testing.T) {
 		Delay:  2 * time.Second,
 	}
 	runner := newTrackingRunner(baseRunner)
-	orch := NewOrchestrator(mt, mw, runner, &staticConfig{cfg: testConfig()}, nil)
+	orch := newTestOrchestrator(t,mt, mw, runner, &staticConfig{cfg: testConfig()}, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -683,7 +692,7 @@ func TestOrchestrator_GracefulShutdownOnce(t *testing.T) {
 			mt := newObservingTracker([]types.Issue{{ID: issueID, Title: "Shutdown", State: types.Running}})
 			ws := newCountingWorkspace(t.TempDir())
 			runner := &stopCountingRunner{}
-			orch := NewOrchestrator(mt, ws, runner, &staticConfig{cfg: testConfig()}, nil)
+			orch := newTestOrchestrator(t,mt, ws, runner, &staticConfig{cfg: testConfig()}, nil)
 
 			var cancelCalls atomic.Int32
 			orch.mu.Lock()
@@ -723,7 +732,7 @@ func TestEmptyPoll(t *testing.T) {
 	mt := newObservingTracker(nil)
 	mw := workspace.NewMockManager(t.TempDir())
 	mr := &agent.MockRunner{}
-	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -746,7 +755,7 @@ func TestEventsEmitted(t *testing.T) {
 		Events: []types.AgentEvent{{Type: "turn/completed"}},
 		Delay:  10 * time.Millisecond,
 	}
-	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -783,7 +792,7 @@ func TestOrchestrator_StopRunCleansOrphanedEntry(t *testing.T) {
 				Delay:  2 * time.Second,
 			}
 			cfg := &staticConfig{cfg: testConfig()}
-			orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+			orch := newTestOrchestrator(t,mt, mw, mr, cfg, nil)
 
 			runSignals := make(chan runSignal, 16)
 			supervisor := &errgroup.Group{}
@@ -831,7 +840,7 @@ func TestOrchestrator_ReconcileForceRemovesBrokenDone(t *testing.T) {
 			mt := newObservingTracker(nil)
 			mw := workspace.NewMockManager(t.TempDir())
 			runner := &agent.MockRunner{}
-			orch := NewOrchestrator(mt, mw, runner, &staticConfig{cfg: tt.config}, nil)
+			orch := newTestOrchestrator(t,mt, mw, runner, &staticConfig{cfg: tt.config}, nil)
 
 			orch.mu.Lock()
 			orch.running[tt.issue] = tt.entry
@@ -885,7 +894,7 @@ func TestOrchestrator_IssueCacheEvictsOldest(t *testing.T) {
 			mt := newObservingTracker(nil)
 			mw := workspace.NewMockManager(t.TempDir())
 			mr := &agent.MockRunner{}
-			orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
+			orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
 
 			// Prefill the cache with tt.prefill entries
 			orch.mu.Lock()
@@ -932,7 +941,7 @@ func TestOrchestrator_EmitEventDropLogged(t *testing.T) {
 			mt := newObservingTracker(nil)
 			mw := workspace.NewMockManager(t.TempDir())
 			mr := &agent.MockRunner{}
-			orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, logger)
+			orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: testConfig()}, logger)
 
 			// Fill the events channel to capacity
 			for i := 0; i < defaultEventBufferSize; i++ {
@@ -960,7 +969,7 @@ func TestOrchestrator_CompleteRunPostsComment(t *testing.T) {
 		Delay:  10 * time.Millisecond,
 	}
 	cfg := &staticConfig{cfg: testConfig()}
-	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, cfg, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -987,7 +996,7 @@ func TestOrchestrator_ReconcileAssignsTimedOut(t *testing.T) {
 	runner := &agent.MockRunner{}
 	cfg := testConfig()
 	cfg.AgentTimeoutMsRaw = 1 // 1ms timeout
-	orch := NewOrchestrator(mt, mw, runner, &staticConfig{cfg: cfg}, nil)
+	orch := newTestOrchestrator(t,mt, mw, runner, &staticConfig{cfg: cfg}, nil)
 	go func() {
 		for range orch.Events() {
 		}
@@ -1039,7 +1048,7 @@ func TestOrchestrator_WorkspaceCreateFailure(t *testing.T) {
 	ws := &failingWorkspace{createErr: errors.New("disk full")}
 	mr := &agent.MockRunner{}
 	cfg := &staticConfig{cfg: testConfig()}
-	orch := NewOrchestrator(mt, ws, mr, cfg, nil)
+	orch := newTestOrchestrator(t,mt, ws, mr, cfg, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1069,7 +1078,7 @@ func TestOrchestrator_PromptRenderFailure(t *testing.T) {
 	cfg := &staticConfig{cfg: testConfig()}
 	// Use an invalid liquid template that will cause RenderPrompt to fail
 	cfg.cfg.PromptTemplate = "{{ invalid_var_that_does_not_exist }}"
-	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, cfg, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1100,7 +1109,7 @@ func TestOrchestrator_ClaimUpdateFailureRollback(t *testing.T) {
 	mw := workspace.NewMockManager(t.TempDir())
 	mr := &agent.MockRunner{}
 	cfg := &staticConfig{cfg: testConfig()}
-	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, cfg, nil)
 	events := newEventCollector(orch.Events())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1252,7 +1261,7 @@ func TestOrchestrator_EventBufferFull(t *testing.T) {
 	mt := newObservingTracker(nil)
 	mw := workspace.NewMockManager(t.TempDir())
 	mr := &agent.MockRunner{}
-	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, logger)
+	orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: testConfig()}, logger)
 
 	// Fill the events channel completely
 	for i := 0; i < defaultEventBufferSize; i++ {
@@ -1284,7 +1293,7 @@ func TestOrchestrator_NilContext(t *testing.T) {
 	mt := newObservingTracker(nil)
 	mw := workspace.NewMockManager(t.TempDir())
 	mr := &agent.MockRunner{}
-	orch := NewOrchestrator(mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, &staticConfig{cfg: testConfig()}, nil)
 	go func() {
 		for range orch.Events() {
 		}
@@ -1302,7 +1311,7 @@ func TestOrchestrator_BackoffIssueNotInCache(t *testing.T) {
 	mw := workspace.NewMockManager(t.TempDir())
 	mr := &agent.MockRunner{}
 	cfg := &staticConfig{cfg: testConfig()}
-	orch := NewOrchestrator(mt, mw, mr, cfg, nil)
+	orch := newTestOrchestrator(t,mt, mw, mr, cfg, nil)
 	events := newEventCollector(orch.Events())
 
 	// Seed backoff for an issue that won't appear in fetched issues or cache
