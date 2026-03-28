@@ -18,12 +18,15 @@ import (
 
 	contrabass "github.com/junhoyeo/contrabass"
 	"github.com/junhoyeo/contrabass/internal/config"
+	"path/filepath"
+
 	"github.com/junhoyeo/contrabass/internal/hub"
 	"github.com/junhoyeo/contrabass/internal/logging"
 	"github.com/junhoyeo/contrabass/internal/orchestrator"
 	"github.com/junhoyeo/contrabass/internal/tracker"
 	"github.com/junhoyeo/contrabass/internal/tui"
 	"github.com/junhoyeo/contrabass/internal/update"
+	"github.com/junhoyeo/contrabass/internal/wave"
 	"github.com/junhoyeo/contrabass/internal/web"
 	"github.com/junhoyeo/contrabass/internal/workspace"
 )
@@ -109,7 +112,7 @@ progress in a terminal UI built with the Charm stack.`,
 
 	_ = cmd.MarkFlagRequired("config")
 
-	cmd.AddCommand(teamCmd, boardCmd)
+	cmd.AddCommand(teamCmd, boardCmd, waveCmd)
 
 	return cmd
 }
@@ -249,6 +252,24 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 
 	// 9. Create orchestrator
 	orch := orchestrator.NewOrchestrator(trackerClient, workspaceMgr, agentRunner, watcher, logger)
+
+	// Wire wave manager (optional — skipped if init fails)
+	var waveMgr *wave.Manager
+	waveConfigPath := filepath.Join(repoPath, "wave-config.yaml")
+	if _, statErr := os.Stat(waveConfigPath); statErr == nil || cfg.TrackerType() == "github" {
+		waveCfgPath := ""
+		if _, statErr2 := os.Stat(waveConfigPath); statErr2 == nil {
+			waveCfgPath = waveConfigPath
+		}
+		var waveErr error
+		waveMgr, waveErr = wave.NewManager(trackerClient, waveCfgPath, nil)
+		if waveErr != nil {
+			logger.Warn("wave manager init failed, continuing without", "err", waveErr)
+			waveMgr = nil
+		}
+	}
+	orch.SetWaveManager(waveMgr)
+
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signalChan)
