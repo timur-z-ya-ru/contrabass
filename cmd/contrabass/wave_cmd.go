@@ -89,7 +89,8 @@ func runWaveStatus(cmd *cobra.Command, _ []string) error {
 }
 
 func runWaveHealth(cmd *cobra.Command, _ []string) error {
-	mgr, err := wave.NewManager(nil, "", log.Default())
+	cfgPath, _ := cmd.Flags().GetString("config")
+	mgr, err := wave.NewManager(nil, cfgPath, log.Default())
 	if err != nil {
 		return fmt.Errorf("creating wave manager: %w", err)
 	}

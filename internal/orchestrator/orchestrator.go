@@ -214,6 +214,10 @@ func (o *Orchestrator) runCycle(ctx context.Context, supervisor *errgroup.Group,
 		if err := o.wave.Refresh(issues); err != nil {
 			logging.LogOrchestratorEvent(o.logger, "wave_refresh_failed", "err", err)
 		}
+		// Auto-promote current wave if no issues have agent-ready labels
+		if err := o.wave.AutoPromoteIfNeeded(ctx, issues); err != nil {
+			o.logger.Warn("wave auto-promote failed", "err", err)
+		}
 	}
 
 	o.dispatchReadyBackoff(ctx, supervisorCtxOr(ctx), cfg, issuesByID, supervisor, runSignals)
@@ -366,7 +370,7 @@ func (o *Orchestrator) dispatchIssue(
 		maxTurns := cfg.ClaudeMaxTurns()
 		opts = &agent.RunOptions{
 			MaxTurns:      effectiveMaxTurns(maxTurns, attemptNumber),
-			ModelOverride: o.wave.ResolveModel(issue),
+			ModelOverride: resolveModelWithFallback(issue, o.wave),
 			Attempt:       attemptNumber,
 			IsRetry:       attemptNumber > 1,
 		}
@@ -540,6 +544,18 @@ func (o *Orchestrator) sendRunSignal(ctx context.Context, runSignals chan<- runS
 	case runSignals <- signal:
 		return true
 	}
+}
+
+// resolveModelWithFallback returns the model override for the given issue.
+// Issue body ModelOverride takes precedence over wave label-based routing.
+func resolveModelWithFallback(issue types.Issue, wm *wave.Manager) string {
+	if issue.ModelOverride != "" {
+		return issue.ModelOverride
+	}
+	if wm != nil {
+		return wm.ResolveModel(issue)
+	}
+	return ""
 }
 
 // putIssueCacheLocked inserts or updates an entry in the issue cache.

@@ -117,6 +117,13 @@ func (m *Manager) Refresh(issues []types.Issue) error {
 	m.openSet = open
 	m.mu.Unlock()
 
+	// Auto-DAG mode: DAG built from partial issue set (only agent-ready labeled)
+	if pipeline != nil && pipeline.Config == nil {
+		if m.logger != nil {
+			m.logger.Printf("wave.Manager: auto-DAG mode: DAG built from agent-ready issues only, may be incomplete")
+		}
+	}
+
 	return nil
 }
 
@@ -288,6 +295,54 @@ func (m *Manager) UpdateTokens(issueID string, tokensIn, tokensOut int64) {
 	node.TotalTokensIn += tokensIn
 	node.TotalTokensOut += tokensOut
 	node.Attempts++
+}
+
+// AutoPromoteIfNeeded checks if the current wave has no agent-ready labeled issues.
+// If so, promotes them. Called after Refresh on startup.
+func (m *Manager) AutoPromoteIfNeeded(ctx context.Context, issues []types.Issue) error {
+	m.mu.RLock()
+	pipeline := m.pipeline
+	m.mu.RUnlock()
+
+	if pipeline == nil {
+		return nil
+	}
+
+	currentWave := m.findCurrentWave()
+	if currentWave == nil {
+		return nil
+	}
+
+	// Check if any issue in current wave already has agent-ready label
+	hasReady := false
+	for _, issue := range issues {
+		for _, id := range currentWave.Issues {
+			if issue.ID == id {
+				for _, label := range issue.Labels {
+					if label == m.promoter.modelRouting.DefaultLabel || label == m.promoter.modelRouting.HeavyLabel {
+						hasReady = true
+						break
+					}
+				}
+			}
+			if hasReady {
+				break
+			}
+		}
+		if hasReady {
+			break
+		}
+	}
+
+	if !hasReady {
+		allIssues := make(map[string]types.Issue, len(issues))
+		for _, issue := range issues {
+			allIssues[issue.ID] = issue
+		}
+		_, err := m.promoter.PromoteWave(ctx, *currentWave, allIssues)
+		return err
+	}
+	return nil
 }
 
 // ResolveModel returns the model override for the given issue based on routing rules.

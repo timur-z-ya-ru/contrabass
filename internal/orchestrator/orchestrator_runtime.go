@@ -334,8 +334,11 @@ func (o *Orchestrator) enqueueBackoffFromRunning(ctx context.Context, issue type
 func (o *Orchestrator) releaseClaimAndQueueContinuation(ctx context.Context, issueID string, attempt int, cause error) {
 	releaseTimestamp := time.Now()
 
-	if err := o.tracker.UpdateIssueState(ctx, issueID, types.Released); err != nil {
-		logging.LogIssueEvent(o.logger, issueID, "update_released_failed", "err", err)
+	// Transition to RetryQueued instead of Released to keep the issue OPEN on GitHub.
+	// Released closes the issue, making it invisible to FetchIssues (state=open filter)
+	// and unrecoverable after restart since the backoff queue is in-memory.
+	if err := o.tracker.UpdateIssueState(ctx, issueID, types.RetryQueued); err != nil {
+		logging.LogIssueEvent(o.logger, issueID, "update_retry_queued_failed", "err", err)
 	}
 	if err := o.tracker.ReleaseIssue(ctx, issueID); err != nil {
 		logging.LogIssueEvent(o.logger, issueID, "release_failed", "err", err)

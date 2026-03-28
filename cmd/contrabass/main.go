@@ -254,8 +254,12 @@ func run(cfgPath string, noTUI bool, logFile, logLevel string, dryRun bool, port
 	orch := orchestrator.NewOrchestrator(trackerClient, workspaceMgr, agentRunner, watcher, logger)
 
 	// Wire wave manager (optional — skipped if init fails)
+	// Try wave-config.yaml next to WORKFLOW.md first, then CWD
 	var waveMgr *wave.Manager
-	waveConfigPath := filepath.Join(repoPath, "wave-config.yaml")
+	waveConfigPath := filepath.Join(filepath.Dir(cfgPath), "wave-config.yaml")
+	if _, statErr := os.Stat(waveConfigPath); statErr != nil {
+		waveConfigPath = filepath.Join(repoPath, "wave-config.yaml")
+	}
 	if _, statErr := os.Stat(waveConfigPath); statErr == nil || cfg.TrackerType() == "github" {
 		waveCfgPath := ""
 		if _, statErr2 := os.Stat(waveConfigPath); statErr2 == nil {
